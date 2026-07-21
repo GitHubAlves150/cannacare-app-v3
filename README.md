@@ -55,62 +55,53 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 3: Autenticação e JWT
+## 📁 ETAPA 4: CRUD de médicos
 
 Objetivo desta etapa:
 
-    Mapeamento das tabelas em GO e rodar Migrations para criar as tabelas no PostgreSQO
+   nesta etapa vamos focar em criar as API's para criar, ler, atualizar e deletar registros de médicos.
+
+- CRUD completo de médicos (Create, Read, Update, Delete)
+
+- Endpoints para listar médicos
+
+- Buscar médico por ID
+
+- Atualizar dados do médico
+
+- Desativar médico (soft delete)
+
+- Listar médicos com filtros (por especialidade, CRM, etc)
 
 ```bash
-cannacare-backend/
+cannacare-app-v3/
 ├── internal/
 │   ├── models/
-│   │   └── user.go              # ✅ Já existe
-│   ├── config/
-│   │   └── config.go            # ✅ Já existe (vamos adicionar JWT config)
-│   ├── database/
-│   │   └── db.go                # ✅ Já existe
+│   │   └── doctor.go              # ✅ Já existe
 │   ├── services/
-│   │   └── auth_service.go      # 🆕 Lógica de autenticação
+│   │   ├── auth_service.go        # ✅ Já existe
+│   │   └── doctor_service.go      # 🆕 Lógica de negócio para médicos
 │   ├── handlers/
-│   │   └── auth_handler.go      # 🆕 Endpoints HTTP
+│   │   ├── auth_handler.go        # ✅ Já existe
+│   │   └── doctor_handler.go      # 🆕 Endpoints HTTP para médicos
 │   ├── middleware/
-│   │   └── auth.go              # 🆕 Middleware de autenticação
+│   │   └── auth.go                # ✅ Já existe
 │   └── utils/
-│       └── response.go          # 🆕 Respostas padronizadas
+│       └── response.go            # ✅ Já existe
 ├── pkg/
 │   └── jwt/
-│       └── jwt.go               # 🆕 Gerar/validar JWT
-└── cmd/api/main.go              # ✅ Já existe (vamos atualizar)
-
-```
-
-## 📦 INSTALAR NOVAS DEPENDÊNCIAS
-
-```bash
-# JWT para autenticação
-go get -u github.com/golang-jwt/jwt/v5
-
-# Bcrypt para hash de senhas
-go get -u golang.org/x/crypto/bcrypt
-
-# Validação de dados
-go get -u github.com/go-playground/validator/v10
+│       └── jwt.go                 # ✅ Já existe
+└── cmd/api/main.go                # 🔄 Vamos atualizar
 ``` 
 
-## 🚀 TESTAR A API
+## 🧪 TESTES DA ETAPA 4 - CRUD DE MÉDICOS
 
-Abra um terminal e execute o comando para cada endpoint
+PRÉ-REQUISITO: OBTER TOKEN DE AUTENTICAÇÃO
 
-1. Health Check
-- ```curl http://localhost:8080/health```
+Antes de testar os endpoints de médicos, você precisa estar autenticado:
 
-## Resposta: 
-![alt text](image.png)
-
-
-## 2. Registrar um usuário
-```bash 
+```bash
+# 1. Registrar um usuário admin (se ainda não fez)
 curl -X POST http://localhost:8080/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
@@ -119,45 +110,286 @@ curl -X POST http://localhost:8080/api/auth/register \
     "password": "admin123",
     "role": "admin"
   }'
-  ```
 
-## Resposta:
-
-![alt text](image-1.png)
-
-## 3. Fazer login
-```bash
+# 2. Fazer login e obter o token
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "admin@cannacare.com",
     "password": "admin123"
   }'
-
 ```
-## Resposta:
 
-![alt text](image-2.png)
+## Resposta do login:
 
-![alt text](image-3.png)
+```bash
 
-## 4. Acessar rota protegida
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "token_type": "Bearer",
+    "expires_in": 86400,
+    "user": {
+      "id": "uuid",
+      "name": "Administrador",
+      "email": "admin@cannacare.com",
+      "role": "admin"
+    }
+  }
+}
+```
+## GUARDE O TOKEN! Você vai usar em todas as requisições:
 
- Pegue o token do login e substitua
+```bash
+# Defina a variável TOKEN (substitua pelo token real)
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoi..."
+```
+## TESTE 1: CRIAR UM MÉDICO.
+
 ``` bash
-TOKEN="seu-token-aqui"
-curl -X GET http://localhost:8080/api/protected \
+curl -X POST http://localhost:8080/api/doctors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Dra. Maria Silva",
+    "crm": "12345",
+    "crm_state": "SP",
+    "specialty": "Neurologia",
+    "phone": "(11) 99999-9999",
+    "email": "maria.silva@email.com"
+  }'
+```
+## Resposta.
+![alt text](image-6.png)
+
+## TESTE 2: CRIAR MAIS MÉDICOS.
+ ```bash
+# Médico 2
+TOKEN="substitue o token aqui"
+curl -X POST http://localhost:8080/api/doctors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Dr. João Santos",
+    "crm": "67890",
+    "crm_state": "RJ",
+    "specialty": "Psiquiatria",
+    "phone": "(21) 88888-8888",
+    "email": "joao.santos@email.com"
+  }'
+
+# Médico 3
+
+TOKEN="substitue o token aqui"
+curl -X POST http://localhost:8080/api/doctors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Dra. Ana Oliveira",
+    "crm": "11111",
+    "crm_state": "MG",
+    "specialty": "Neurologia",
+    "phone": "(31) 77777-7777",
+    "email": "ana.oliveira@email.com"
+  }'
+
+ ``` 
+
+ ## TESTE 3: LISTAR TODOS OS MÉDICOS.
+ ``` bash
+ curl -X GET http://localhost:8080/api/doctors \
+  -H "Authorization: Bearer $TOKEN"
+ ```
+
+ ## Resposta.
+
+ ![alt text](image-7.png)
+ ___
+ ![alt text](image-8.png)
+
+ ## TESTE 4: LISTAR COM FILTROS.
+ Filtrar por especialidade:
+
+ ```bash
+curl -X GET "http://localhost:8080/api/doctors?specialty=Neurologia" \
+  -H "Authorization: Bearer $TOKEN"
+ ```
+ ![alt text](image-9.png)
+
+ ## Filtrar por nome:
+ ``` bash
+curl -X GET "http://localhost:8080/api/doctors?name=Maria" \
+  -H "Authorization: Bearer $TOKEN"
+ ```
+ ## Resposta.
+ ![alt text](image-10.png)
+
+## Filtrar por CRM:
+
+``` bash
+curl -X GET "http://localhost:8080/api/doctors?crm=12345" \
   -H "Authorization: Bearer $TOKEN"
 ``` 
 
-  Resposta: 
-  ![alt text](image-4.png)
+## Resposta.
+![alt text](image-11.png)
 
-  ## 5. Acessar rota Admin
-  ```bash
-  curl -X GET http://localhost:8080/api/admin \
+## Filtrar por status (apenas ativos/inativos):
+```bash
+# Apenas ativos
+curl -X GET "http://localhost:8080/api/doctors?is_active=true" \
   -H "Authorization: Bearer $TOKEN"
 
-  ``` 
-## Resposta
-  ![alt text](image-5.png)
+# Apenas inativos
+curl -X GET "http://localhost:8080/api/doctors?is_active=false" \
+  -H "Authorization: Bearer $TOKEN"
+``` 
+
+## Com paginação:
+``` bash
+curl -X GET "http://localhost:8080/api/doctors?page=1&limit=2" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## TESTE 5: BUSCAR MÉDICO POR ID.
+Primeiro, pegue o ID de um médico da listagem:
+```bash
+# Substitua {id} pelo UUID real do médico
+curl -X GET "http://localhost:8080/api/doctors/{id}" \
+  -H "Authorization: Bearer $TOKEN"
+``` 
+## Resposta:
+
+![alt text](image-12.png)
+
+## TESTE 6: ATUALIZAR MÉDICO.
+```bash
+# Substitua {id} pelo UUID real
+curl -X PUT "http://localhost:8080/api/doctors/{id}" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "specialty": "Neuropediatria",
+    "phone": "(11) 98888-8888"
+  }'
+
+```
+
+## Atualizar todos os campos:
+```bash
+curl -X PUT "http://localhost:8080/api/doctors/{id}" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Dr. Roberto Silva Souza",
+    "specialty": "Neuropediatria",
+    "phone": "(11) 97777-7777",
+    "email": "maria.souza@email.com",
+    "is_active": true
+  }'
+``` 
+![alt text](image-13.png)
+
+
+## TESTE 7: DESATIVAR MÉDICO.
+```bash
+# Substitua {id} pelo UUID real
+curl -X PUT "http://localhost:8080/api/doctors/{id}" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "is_active": false
+  }'
+``` 
+
+## TESTE 8: DELETAR MÉDICO (SOFT DELETE).
+```bash
+# Substitua {id} pelo UUID real
+curl -X DELETE "http://localhost:8080/api/doctors/{id}" \
+  -H "Authorization: Bearer $TOKEN"
+```
+## Verificar se o médico foi removido (não deve aparecer na listagem):
+```bash
+curl -X GET http://localhost:8080/api/doctors \
+  -H "Authorization: Bearer $TOKEN"
+```
+## Resposta.
+![alt text](image-14.png)
+
+## TESTE 9: MÉDICOS QUE MAIS PRESCREVEM.
+``` bash
+curl -X GET http://localhost:8080/api/doctors/top \
+  -H "Authorization: Bearer $TOKEN"
+``` 
+
+## Resposta.
+Resposta esperada (inicialmente vazia - sem prescrições):
+```bash
+{
+  "success": true,
+  "data": []
+}
+``` 
+## TESTE 10: TESTAR PERMISSÕES.
+Tentar criar médico com usuário comum (sem permissão)
+``` bash
+# 1. Registrar um usuário comum (paciente)
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Paciente Teste",
+    "email": "paciente@teste.com",
+    "password": "teste123",
+    "role": "paciente"
+  }'
+
+# 2. Fazer login como paciente
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "paciente@teste.com",
+    "password": "teste123"
+  }'
+
+# 3. Tentar criar médico (deve dar erro 403 Forbidden)
+TOKEN_PACIENTE="token-do-paciente"
+
+curl -X POST http://localhost:8080/api/doctors \
+  -H "Authorization: Bearer $TOKEN_PACIENTE" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Dr. Teste",
+    "crm": "99999",
+    "crm_state": "SP",
+    "specialty": "Teste"
+  }'
+``` 
+## Resposta.
+![alt text](image-15.png)
+
+![alt text](image-16.png)
+
+## Resumo.
+
+
+| Teste | Endpoint | Método | Status |
+| :---: | :--- | :---: | :---: |
+| 1 | `/api/doctors` | POST | ✅ |
+| 2 | `/api/doctors` | POST (vários) | ✅ |
+| 3 | `/api/doctors` | GET | ✅ |
+| 4 | `/api/doctors?filtros` | GET | ✅ |
+| 5 | `/api/doctors/{id}` | GET | ✅ |
+| 6 | `/api/doctors/{id}` | PUT | ✅ |
+| 7 | `/api/doctors/{id}` | PUT (desativar) | ✅ |
+| 8 | `/api/doctors/{id}` | DELETE | ✅ |
+| 9 | `/api/doctors/top` | GET | ✅ |
+| 10 | Teste de permissão | - | ✅ |
+
+
+| Erro | Causa | Solução |
+| :--- | :--- | :--- |
+| **401 Unauthorized** | Token inválido ou expirado | Fazer login novamente |
+| **403 Forbidden** | Usuário sem permissão | Usar role admin/secretaria |
+| **400 Bad Request** | Dados inválidos | Verificar formato dos dados |
+| **404 Not Found** | ID não existe | Verificar UUID correto |

@@ -7,12 +7,12 @@
 package services
 
 import (
-	"errors"
-	"regexp"
-	"time"
 
-	"cannacare-backend/internal/models" // ← CORRIGIR: use o nome do seu módulo
-	"cannacare-backend/pkg/jwt"         // ← CORRIGIR: use o nome do seu módulo
+	"cannacare-backend/internal/models"
+	"cannacare-backend/pkg/jwt"
+	"cannacare-backend/internal/utils"
+	"errors"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -74,7 +74,7 @@ type UserResponse struct {
 // ================================================================
 func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 	// --- 1. Validar email ---
-	if !isValidEmail(req.Email) {
+	if !utils.IsValidEmail(req.Email) {
 		return nil, errors.New("email inválido")
 	}
 
@@ -127,7 +127,7 @@ func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 // ================================================================
 func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	// --- 1. Validar email ---
-	if !isValidEmail(req.Email) {
+	if !utils.IsValidEmail(req.Email) {
 		return nil, errors.New("email inválido")
 	}
 
@@ -180,11 +180,5 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 	}, nil
 }
 
-// ================================================================
-// FUNÇÃO AUXILIAR: isValidEmail()
-// ================================================================
-func isValidEmail(email string) bool {
-	regex := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
-	matched, _ := regexp.MatchString(regex, email)
-	return matched
-}
+// ❌ REMOVER: func isValidEmail() (já está no utils)
+// ❌ REMOVER: func validateDoctorData() (está no doctor_service.go)
