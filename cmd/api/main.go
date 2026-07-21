@@ -1,6 +1,9 @@
 package main
 
 import (
+	"log"
+	"net/http"
+
 	"cannacare-backend/internal/config"
 	"cannacare-backend/internal/database"
 	"cannacare-backend/internal/handlers"
@@ -8,8 +11,6 @@ import (
 	"cannacare-backend/internal/services"
 	"cannacare-backend/internal/utils"
 	"cannacare-backend/pkg/jwt"
-	"log"
-	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -45,16 +46,15 @@ func main() {
 	// ============================================================
 	log.Println("🔐 Inicializando serviços...")
 
-	// JWT
 	jwtService := jwt.NewJWTService(cfg.JWTSecret, cfg.JWTExpiresIn)
 
-	// Serviços
 	authService := services.NewAuthService(database.DB, jwtService)
 	doctorService := services.NewDoctorService(database.DB)
+	patientService := services.NewPatientService(database.DB) // 🆕
 
-	// Handlers
 	authHandler := handlers.NewAuthHandler(authService)
 	doctorHandler := handlers.NewDoctorHandler(doctorService)
+	patientHandler := handlers.NewPatientHandler(patientService) // 🆕
 
 	// ============================================================
 	// PASSO 5: Configurar rotas
@@ -62,12 +62,11 @@ func main() {
 	log.Println("🛣️ Configurando rotas...")
 	r := chi.NewRouter()
 
-	// Middlewares globais
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
-		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -86,7 +85,7 @@ func main() {
 	r.Post("/api/auth/login", authHandler.Login)
 
 	// ============================================================
-	// ROTAS PROTEGIDAS (com autenticação)
+	// ROTAS PROTEGIDAS
 	// ============================================================
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.AuthMiddleware(jwtService))
@@ -102,9 +101,8 @@ func main() {
 			})
 		})
 
-		// --- Rotas de Médicos (requer role admin ou secretaria) ---
+		// --- Rotas de Médicos ---
 		r.Group(func(r chi.Router) {
-			// Permitir admin e secretaria
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
 
 			r.Post("/api/doctors", doctorHandler.Create)
@@ -113,6 +111,20 @@ func main() {
 			r.Get("/api/doctors/{id}", doctorHandler.GetByID)
 			r.Put("/api/doctors/{id}", doctorHandler.Update)
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
+		})
+
+		// --- 🆕 Rotas de Pacientes ---
+		r.Group(func(r chi.Router) {
+			// Acesso para admin, secretaria, coordenacao e acolhimento
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
+
+			r.Post("/api/patients", patientHandler.Create)
+			r.Get("/api/patients", patientHandler.List)
+			r.Get("/api/patients/stats", patientHandler.GetStatistics)
+			r.Get("/api/patients/{id}", patientHandler.GetByID)
+			r.Put("/api/patients/{id}", patientHandler.Update)
+			r.Patch("/api/patients/{id}/status", patientHandler.UpdateStatus)
+			r.Delete("/api/patients/{id}", patientHandler.Delete)
 		})
 
 		// --- Rota Admin ---
@@ -137,6 +149,7 @@ func main() {
 	log.Println("📝 Register:            POST http://localhost" + addr + "/api/auth/register")
 	log.Println("🔐 Login:               POST http://localhost" + addr + "/api/auth/login")
 	log.Println("👨‍⚕️ Doctors:            http://localhost" + addr + "/api/doctors")
+	log.Println("👤 Patients:            http://localhost" + addr + "/api/patients")
 	log.Println("🔒 Protected:           GET  http://localhost" + addr + "/api/protected")
 	log.Println("🔑 Admin:               GET  http://localhost" + addr + "/api/admin")
 	log.Println("")
@@ -161,7 +174,7 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		"database": "connected",
 		"message":  "CannaCare API está funcionando!",
 		"version":  "1.0.0",
-		"etapa":    "4 - Médicos",
+		"etapa":    "5 - Pacientes",
 	})
 }
 
@@ -169,19 +182,26 @@ func welcomeHandler(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
 		"message": "🌿 Bem-vindo à API CannaCare!",
 		"version": "1.0.0",
-		"etapa":   "4 - Médicos",
+		"etapa":   "5 - Pacientes",
 		"endpoints": map[string]string{
-			"GET  /health":             "Verifica o status do sistema",
-			"POST /api/auth/register":  "Registrar novo usuário",
-			"POST /api/auth/login":     "Login e obter token JWT",
-			"GET  /api/protected":      "Rota protegida (requer token)",
-			"GET  /api/admin":          "Rota admin (requer role admin)",
-			"POST /api/doctors":        "Criar médico (admin/secretaria)",
-			"GET  /api/doctors":        "Listar médicos (admin/secretaria)",
-			"GET  /api/doctors/{id}":   "Buscar médico por ID",
-			"PUT  /api/doctors/{id}":   "Atualizar médico",
-			"DELETE /api/doctors/{id}": "Remover médico",
-			"GET  /api/doctors/top":    "Médicos que mais prescrevem",
+			"GET  /health":                 "Verifica o status do sistema",
+			"POST /api/auth/register":      "Registrar novo usuário",
+			"POST /api/auth/login":         "Login e obter token JWT",
+			"GET  /api/protected":          "Rota protegida (requer token)",
+			"GET  /api/admin":              "Rota admin (requer role admin)",
+			"POST /api/doctors":            "Criar médico",
+			"GET  /api/doctors":            "Listar médicos",
+			"GET  /api/doctors/{id}":       "Buscar médico por ID",
+			"PUT  /api/doctors/{id}":       "Atualizar médico",
+			"DELETE /api/doctors/{id}":     "Remover médico",
+			"GET  /api/doctors/top":        "Médicos que mais prescrevem",
+			"POST /api/patients":           "Criar paciente",
+			"GET  /api/patients":           "Listar pacientes",
+			"GET  /api/patients/{id}":      "Buscar paciente por ID",
+			"PUT  /api/patients/{id}":      "Atualizar paciente",
+			"PATCH /api/patients/{id}/status": "Mudar status do paciente",
+			"DELETE /api/patients/{id}":    "Remover paciente",
+			"GET  /api/patients/stats":     "Estatísticas de pacientes",
 		},
 	})
 }

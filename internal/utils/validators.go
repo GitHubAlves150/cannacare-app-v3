@@ -8,6 +8,7 @@ package utils
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -24,21 +25,15 @@ func IsValidEmail(email string) bool {
 // IsValidPhone - Valida formato do telefone
 func IsValidPhone(phone string) bool {
 	if phone == "" {
-		return true // Telefone é opcional
+		return true
 	}
-	// Remove espaços, parênteses, traços
 	clean := regexp.MustCompile(`[^0-9]`).ReplaceAllString(phone, "")
-	
-	// Telefone deve ter entre 10 e 11 dígitos (com DDD)
 	if len(clean) < 10 || len(clean) > 11 {
 		return false
 	}
-	
-	// Verifica se começa com DDD válido (1-9)
 	if clean[0] < '1' || clean[0] > '9' {
 		return false
 	}
-	
 	return true
 }
 
@@ -53,4 +48,57 @@ func IsValidState(state string) bool {
 		"SE": true, "TO": true,
 	}
 	return states[strings.ToUpper(state)]
+}
+
+// ================================================================
+// NOVA FUNÇÃO: VALIDAÇÃO DE CPF
+// ================================================================
+// IsValidCPF - Valida se um CPF é válido (algoritmo de validação)
+func IsValidCPF(cpf string) bool {
+	// Remove caracteres não numéricos
+	cpf = regexp.MustCompile(`[^0-9]`).ReplaceAllString(cpf, "")
+
+	// CPF deve ter 11 dígitos
+	if len(cpf) != 11 {
+		return false
+	}
+
+	// Verifica se todos os dígitos são iguais (ex: 111.111.111-11)
+	allEqual := true
+	for i := 1; i < 11; i++ {
+		if cpf[i] != cpf[0] {
+			allEqual = false
+			break
+		}
+	}
+	if allEqual {
+		return false
+	}
+
+	// Calcula o primeiro dígito verificador
+	sum := 0
+	for i := 0; i < 9; i++ {
+		num, _ := strconv.Atoi(string(cpf[i]))
+		sum += num * (10 - i)
+	}
+	firstDigit := 11 - (sum % 11)
+	if firstDigit >= 10 {
+		firstDigit = 0
+	}
+
+	// Calcula o segundo dígito verificador
+	sum = 0
+	for i := 0; i < 10; i++ {
+		num, _ := strconv.Atoi(string(cpf[i]))
+		sum += num * (11 - i)
+	}
+	secondDigit := 11 - (sum % 11)
+	if secondDigit >= 10 {
+		secondDigit = 0
+	}
+
+	// Verifica se os dígitos calculados são iguais aos do CPF
+	firstDigitStr := strconv.Itoa(firstDigit)
+	secondDigitStr := strconv.Itoa(secondDigit)
+	return string(cpf[9]) == firstDigitStr && string(cpf[10]) == secondDigitStr
 }
