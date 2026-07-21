@@ -393,3 +393,31 @@ curl -X POST http://localhost:8080/api/doctors \
 | **403 Forbidden** | Usuário sem permissão | Usar role admin/secretaria |
 | **400 Bad Request** | Dados inválidos | Verificar formato dos dados |
 | **404 Not Found** | ID não existe | Verificar UUID correto |
+
+
+
+| Teste | Cenário | Endpoint / Método | Status |
+| :---: | :--- | :--- | :---: |
+| 1 | Criar médico | `POST /api/doctors` | ✅ Funcionando |
+| 2 | Criar múltiplos médicos | `POST /api/doctors` | ✅ Funcionando |
+| 3 | Listar todos | `GET /api/doctors` | ✅ Funcionando |
+| 4 | Filtrar por especialidade | `GET /api/doctors?specialty=` | ✅ Funcionando |
+| 5 | Filtrar por nome | `GET /api/doctors?name=` | ✅ Funcionando |
+| 6 | Filtrar por CRM | `GET /api/doctors?crm=` | ✅ Funcionando |
+| 7 | Paginação | `GET /api/doctors?page=&limit=` | ✅ Funcionando |
+| 8 | Buscar por ID | `GET /api/doctors/{id}` | ✅ Funcionando |
+| 9 | Atualizar médico | `PUT /api/doctors/{id}` | ✅ Funcionando |
+| 10 | Desativar médico | `PUT /api/doctors/{id}` (is_active: false) | ✅ Funcionando |
+| 11 | Deletar (soft delete) | `DELETE /api/doctors/{id}` | ✅ Funcionando |
+| 12 | Top médicos | `GET /api/doctors/top` | ✅ Funcionando |
+| 13 | Teste de permissão | `POST /api/doctors` (paciente) | ✅ 403 Forbidden |
+____
+
+## Overwiew das etapas
+
+| Etapa | Módulo | Status |
+| :---: | :--- | :---: |
+| 1 | Configuração Inicial | ✅ Concluída |
+| 2 | Models + Migrations | ✅ Concluída |
+| 3 | Autenticação JWT | ✅ Concluída |
+| 4 | CRUD de Médicos | ✅ Concluída |
