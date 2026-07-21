@@ -55,60 +55,34 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 1: CONFIGURAÇÃO INICIAL
+## 📁 ETAPA 2: Models + migratioons
 
 Objetivo desta etapa:
 
-    Configurar a estrutura base do projeto, conexão com banco de dados usando GORM e um health check para validar que tudo está funcionando.
+    Mapeamento das tabelas em GO e rodar Migrations para criar as tabelas no PostgreSQO
 
 ```bash
 
 cannacare-backend/
-├── cmd/
-│   └── api/
-│       └── main.go          # Ponto de entrada da aplicação (inicia o servidor)
-├── internal/                 # Código interno (não pode ser importado por outros projetos)
-│   ├── config/
-│   │   └── config.go        # Carrega variáveis de ambiente (.env)
+├── internal/
+│   ├── models/
+│   │   ├── user.go              # Usuários do sistema
+│   │   ├── patient.go           # Pacientes
+│   │   ├── doctor.go            # Médicos prescritores
+│   │   ├── prescription.go      # Receitas médicas
+│   │   ├── prescription_item.go # Itens da receita
+│   │   ├── product.go           # Produtos (óleos)
+│   │   ├── product_lot.go       # Lotes de produtos
+│   │   ├── stock_movement.go    # Movimentações de estoque
+│   │   ├── order.go             # Pedidos
+│   │   ├── order_item.go        # Itens do pedido
+│   │   ├── payment.go           # Pagamentos
+│   │   ├── subscription.go      # Anuidades
+│   │   ├── anamnese.go          # Acolhimento/rastreamento
+│   │   ├── patient_document.go  # Documentos do paciente
+│   │   ├── notification.go      # Notificações
+│   │   └── patient_status_history.go # Histórico de status
 │   └── database/
-│       └── db.go            # Gerencia a conexão com PostgreSQL usando GORM
-├── pkg/                      # Código reutilizável (pode ser importado por outros projetos)
-├── .env                      # Variáveis de ambiente (não versionar no Git!)
-├── go.mod                    # Gerenciador de dependências
-└── go.sum                    # Checksums das dependências (gerado automaticamente)
+│       └── migrate.go           # Script de migração
 
-```
-
-# Inicializa o módulo Go com o nome do projeto
-# O nome será usado para importar pacotes internos
-- go mod init cannacare-backend
-- Para testar; go run cmd/api/main.go
-- Acessar http://localhost:8080/
-- http://localhost:8080/health
-
-```bash
-┌─────────────────────────────────────────────────────────────────┐
-│                         SUA MÁQUINA                            │
-│                                                                 │
-│   ┌─────────────────────────────────────────────────────────┐  │
-│   │          CONTAINER DOCKER (cannacare_postgres)          │  │
-│   │                                                         │  │
-│   │   PostgreSQL 15 Alpine ✅                               │  │
-│   │   Porta: 5433 (mapeada para 5432 interno)               │  │
-│   │   Banco: cannacare_db ✅                                │  │
-│   │   Usuário: postgres ✅                                  │  │
-│   └─────────────────────────────────────────────────────────┘  │
-│                                │                                │
-│                                ▼                                │
-│                    🔗 Conexão estabelecida!                     │
-│                                │                                │
-│                                ▼                                │
-│   ┌─────────────────────────────────────────────────────────┐  │
-│   │            APLICAÇÃO GO (RODANDO NA MÁQUINA)            │  │
-│   │                                                         │  │
-│   │   go run cmd/api/main.go ✅                             │  │
-│   │   Porta da API: 8080 ✅                                 │  │
-│   │   Health check: /health ✅                             │  │
-│   └─────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
 ```
