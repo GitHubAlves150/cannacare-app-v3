@@ -55,34 +55,45 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 2: Models + migratioons
+## 📁 ETAPA 3: Autenticação e JWT
 
 Objetivo desta etapa:
 
     Mapeamento das tabelas em GO e rodar Migrations para criar as tabelas no PostgreSQO
 
 ```bash
-
 cannacare-backend/
 ├── internal/
 │   ├── models/
-│   │   ├── user.go              # Usuários do sistema
-│   │   ├── patient.go           # Pacientes
-│   │   ├── doctor.go            # Médicos prescritores
-│   │   ├── prescription.go      # Receitas médicas
-│   │   ├── prescription_item.go # Itens da receita
-│   │   ├── product.go           # Produtos (óleos)
-│   │   ├── product_lot.go       # Lotes de produtos
-│   │   ├── stock_movement.go    # Movimentações de estoque
-│   │   ├── order.go             # Pedidos
-│   │   ├── order_item.go        # Itens do pedido
-│   │   ├── payment.go           # Pagamentos
-│   │   ├── subscription.go      # Anuidades
-│   │   ├── anamnese.go          # Acolhimento/rastreamento
-│   │   ├── patient_document.go  # Documentos do paciente
-│   │   ├── notification.go      # Notificações
-│   │   └── patient_status_history.go # Histórico de status
-│   └── database/
-│       └── migrate.go           # Script de migração
+│   │   └── user.go              # ✅ Já existe
+│   ├── config/
+│   │   └── config.go            # ✅ Já existe (vamos adicionar JWT config)
+│   ├── database/
+│   │   └── db.go                # ✅ Já existe
+│   ├── services/
+│   │   └── auth_service.go      # 🆕 Lógica de autenticação
+│   ├── handlers/
+│   │   └── auth_handler.go      # 🆕 Endpoints HTTP
+│   ├── middleware/
+│   │   └── auth.go              # 🆕 Middleware de autenticação
+│   └── utils/
+│       └── response.go          # 🆕 Respostas padronizadas
+├── pkg/
+│   └── jwt/
+│       └── jwt.go               # 🆕 Gerar/validar JWT
+└── cmd/api/main.go              # ✅ Já existe (vamos atualizar)
 
 ```
+
+## 📦 INSTALAR NOVAS DEPENDÊNCIAS
+
+```bash
+# JWT para autenticação
+go get -u github.com/golang-jwt/jwt/v5
+
+# Bcrypt para hash de senhas
+go get -u golang.org/x/crypto/bcrypt
+
+# Validação de dados
+go get -u github.com/go-playground/validator/v10
+``` 
