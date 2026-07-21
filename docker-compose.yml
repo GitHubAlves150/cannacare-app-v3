@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: cannacare_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: cannacare2026!
+      POSTGRES_DB: cannacare_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  postgres_data:
+
+# para mudar a senha do banco
+# docker rm -f $(docker ps -aq --filter name=postgres) # Remove o antigo se houver
+# docker run --name cannacare-postgres -e POSTGRES_PASSWORD=cannacare2026! -p 5432:5432 -d postgres
