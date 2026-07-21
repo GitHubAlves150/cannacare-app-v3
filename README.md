@@ -97,3 +97,67 @@ go get -u golang.org/x/crypto/bcrypt
 # Validação de dados
 go get -u github.com/go-playground/validator/v10
 ``` 
+
+## 🚀 TESTAR A API
+
+Abra um terminal e execute o comando para cada endpoint
+
+1. Health Check
+- ```curl http://localhost:8080/health```
+
+## Resposta: 
+![alt text](image.png)
+
+
+## 2. Registrar um usuário
+```bash 
+curl -X POST http://localhost:8080/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Administrador",
+    "email": "admin@cannacare.com",
+    "password": "admin123",
+    "role": "admin"
+  }'
+  ```
+
+## Resposta:
+
+![alt text](image-1.png)
+
+## 3. Fazer login
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@cannacare.com",
+    "password": "admin123"
+  }'
+
+```
+## Resposta:
+
+![alt text](image-2.png)
+
+![alt text](image-3.png)
+
+## 4. Acessar rota protegida
+
+ Pegue o token do login e substitua
+``` bash
+TOKEN="seu-token-aqui"
+curl -X GET http://localhost:8080/api/protected \
+  -H "Authorization: Bearer $TOKEN"
+``` 
+
+  Resposta: 
+  ![alt text](image-4.png)
+
+  ## 5. Acessar rota Admin
+  ```bash
+  curl -X GET http://localhost:8080/api/admin \
+  -H "Authorization: Bearer $TOKEN"
+
+  ``` 
+## Resposta
+  ![alt text](image-5.png)
