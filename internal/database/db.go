@@ -13,10 +13,10 @@ package database
 //PADRÃO UTILIZADO: singleton
 // -A Conexão é criada uma única vez (no Connect)
 // -Todas as operações usam a mesma instância (DB global)
-// -Evita múltiplas conexões desnecessárias 
+// -Evita múltiplas conexões desnecessárias
 // ================================================================
 
-import(
+import (
 	"fmt"
 	"log"
 
@@ -32,8 +32,7 @@ import(
 	"gorm.io/gorm"
 
 	// Logger do GORM - controla o nível de detalhe dos logs
-	"gorm.io/gorm/logger"	
-
+	"gorm.io/gorm/logger"
 )
 
 // ================================================================
@@ -41,7 +40,7 @@ import(
 // ================================================================
 // Armazena a instãncia única do *gorm.DB
 // È exportada (maiúscula) para ser acessada por outros pacotes
-// 
+//
 //COMO USAR:
 // //Em handler
 // db:= database.GetDB()
@@ -49,39 +48,42 @@ import(
 // db.First(&patient, "id = ?", id)
 
 var DB *gorm.DB
+
 // ================================================================
 // FUNÇÃO CONNECT()
 // ================================================================
 // Estabelece a conexão com o banco de dados PostgreSQL
-// 
+//
 // PARAMETROS:
 // cfg *config.Config -Configurações carregadas do .env
-// 
+//
 // RETORNO:
 // erro - se houver erro na conexão, retonra o err
-// 
+//
 // FLUXO:
 // 1. Monta a DSN (Data Source Name) - string de conexão
-// 2. Tenta abrir a conexão com o GORM 
+// 2. Tenta abrir a conexão com o GORM
 // 3. Configura o logger para mostrar todas as queries
 // 4. Armazena na variável global DB
 //
 // EXEMPLO DE DSN:
-//   "host=localhost user=postgres password=postgres dbname=cannacare port=5432 sslmode=disable"
+//
+//	"host=localhost user=postgres password=postgres dbname=cannacare port=5432 sslmode=disable"
+//
 // ================================================================
-func Connect(cfg *config.Config)error{
+func Connect(cfg *config.Config) error {
 	//===PASSO 1: Montar a dsn ====
 	//DSN = Data Source Name = string de conexão
 	// Formato: "host=... user=... password=... dbname=... port=... sslmode=..."
-	dsn:= fmt.Sprintf(
+	dsn := fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s",
 		cfg.DBHost,
 		cfg.DBUser,
 		cfg.DBPassword,
 		cfg.DBName,
 		cfg.DBPort,
-		cfg.DBSSLMode,		
-	)	
+		cfg.DBSSLMode,
+	)
 
 	//log para debug - mostra qual banco está conectado
 	//Nunca logue a senha em produção
@@ -97,7 +99,7 @@ func Connect(cfg *config.Config)error{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 
-	if err != nil{
+	if err != nil {
 		// se não conseguiu conectar, retorna erro com contexto
 		return fmt.Errorf("Falha ao conectar ao banco: %s", err)
 	}
@@ -105,13 +107,13 @@ func Connect(cfg *config.Config)error{
 	// passo 3: verificar se a conecxão está ativa
 	// O GORM pode conectar, mas o banco pode estar inativo
 	// ping() verifica se a conexão funciona
-	
-	sqlDB, err := DB.DB()
-	if err != nil{
-		return fmt.Errorf("Falah ao obter conexão: %w", err)
-	} 
 
-	if err := sqlDB.Ping(); err != nil{
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return fmt.Errorf("Falah ao obter conexão: %w", err)
+	}
+
+	if err := sqlDB.Ping(); err != nil {
 		return fmt.Errorf("Banco não respondeu ao ping: %w", err)
 	}
 
@@ -129,7 +131,7 @@ func Connect(cfg *config.Config)error{
 // var patients []models.Patients
 // db.Find(&patients)
 // ================================================================
-func GetDB() *gorm.DB{
+func GetDB() *gorm.DB {
 	return DB
 }
 
@@ -139,20 +141,20 @@ func GetDB() *gorm.DB{
 // Fecha aconexão com o banco de dados
 // Deve ser chamada quando a apllicação for encerrada (defer)
 //
-//USO: 
+// USO:
 // defer database.Close()
 //
-//Retorno:
+// Retorno:
 // erro - Se tiver erro ao fechar, retorna o erro
 // ================================================================
-func Close() error{
+func Close() error {
 	// Obté a conexão SQL subjacente
 	sqlDB, err := DB.DB()
-	if err != nil{
+	if err != nil {
 		return err
 	}
 
 	//Fecha a conexão
 	log.Println("Fechando conexão com o banco...")
-	return  sqlDB.Close()
+	return sqlDB.Close()
 }

@@ -103,7 +103,7 @@ func Load() *Config {
 // ===========================================================================
 // Busca a variavel de ambiente pelo nome (key)
 // Se não existir, retorna um valor padrão (defaultValue)
-// 
+//
 // PORQEU USAR?
 // 1. Evita que o sisitema quebre se uma variavel nçao estiver definida
 // 2. Facilita o desenvolvimento local sem precisar definir todas as variaveis
@@ -113,15 +113,12 @@ func Load() *Config {
 // host := getEnv("DB_HOST", "localhost")
 // Se DB_HOST estiver definido, usa o valor, se não, usa "localhost"
 // ===========================================================================
-func getEnv(key, defaultvalue string)string{
+func getEnv(key, defaultvalue string) string {
 	// Os.Getenv busca a variavel de ambiente pelo nome (key)
-	if value := os.Getenv(key); value!= ""{
+	if value := os.Getenv(key); value != "" {
 		// Se encontrou e não está vazia então retorna o valor
 		return value
 	}
 	//Se não encontrou, retorna o valor padrão
 	return defaultvalue
 }
-
-
-
