@@ -60,48 +60,24 @@ git checkout -b etapa-15-testes
 Objetivo desta etapa:
     Nesta etapa terminamos a parte de middlewares e permissões, garantindo que cada perfil de usuário tenha acesso apenas ao que realmente precisa. também vamos adicionar validações extras e logs.
 
-📁 ESTRUTURA QUE VAMOS CRIAR
+📁 ESTRUTURA QUE VAMOS ATUALIZAR
 ```bash
-cannacare-app-v3/
+cannacare-app-v3/cannacare-app-v3/
 ├── internal/
-│   ├── services/
-│   │   ├── ... (todos os services existentes)
-│   │   └── dashboard_service.go    # 🆕 Lógica para dashboard
-│   ├── handlers/
-│   │   ├── ... (todos os handlers existentes)
-│   │   └── dashboard_handler.go    # 🆕 Endpoints para dashboard
 │   ├── middleware/
-│   │   └── auth.go                 # ✅ Já existe
+│   │   ├── auth.go                 # ✅ Já existe - vamos melhorar
+│   │   ├── permissions.go          # 🆕 Sistema de permissões
+│   │   └── logger.go               # 🆕 Logging de requisições
+│   ├── config/
+│   │   └── config.go               # ✅ Já existe
+│   ├── models/
+│   │   └── user.go                 # ✅ Já existe
 │   └── utils/
-│       ├── response.go             # ✅ Já existe
-│       └── validators.go           # ✅ Já existe
+│       └── response.go             # ✅ Já existe
 ├── pkg/
 │   └── jwt/
 │       └── jwt.go                  # ✅ Já existe
 └── cmd/api/main.go                 # 🔄 Vamos atualizar
 ```
 
-## ✅ TESTAR OS ENDPOINTS DE DASHBOARD
 
-Fazer login
-
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@cannacare.com","password":"admin123"}' \
-  | jq -r '.data.token')
-
-  # Ou
-
-  curl -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@cannacare.com","password":"admin123"}' | jq '.'
-  
-  
-
-``` 
-xxxx
-```bash
-xxxxxx
-
-``` 
