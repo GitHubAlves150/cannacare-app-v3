@@ -113,6 +113,26 @@ func main() {
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
 		})
 
+		// Inicializar Anamnese Service
+		// ----Rotas anamenese -----
+		anamneseService := services.NewAnamneseService(database.DB)
+
+		// Inicializar Anamnese Handler
+		anamneseHandler := handlers.NewAnamneseHandler(anamneseService)
+
+		// Adicionar as rotas de anamnese no grupo protegido:
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
+
+			// Rotas de Anamnese
+			r.Post("/api/patients/{id}/anamnesis", anamneseHandler.Create)
+			r.Get("/api/patients/{id}/anamnesis", anamneseHandler.GetByPatient)
+			r.Get("/api/anamnesis", anamneseHandler.List)
+			r.Get("/api/anamnesis/{id}", anamneseHandler.GetByID)
+			r.Put("/api/anamnesis/{id}", anamneseHandler.Update)
+			r.Delete("/api/anamnesis/{id}", anamneseHandler.Delete)
+		})
+
 		// -----Rotas de presciçoes/receitas médicas ----
 		prescriptionService := services.NewPrescriptionService(database.DB)
 		prescriptionHandler := handlers.NewPrescriptionHandler(prescriptionService)
@@ -131,7 +151,6 @@ func main() {
 			r.Post("/api/prescriptions/update-status", prescriptionHandler.UpdateAllStatus)
 		})
 
-		
 		// --- 🆕 Rotas de Pacientes ---
 		// Inicializar serviços
 		documentService := services.NewDocumentService(database.DB)
