@@ -197,6 +197,32 @@ func main() {
 			r.Delete("/api/anamnesis/{id}", anamneseHandler.Delete)
 		})
 
+		// Inicializar Financial Services
+		// ----Rotas de financeiro ----
+		financialService := services.NewFinancialService(database.DB)
+
+		// Inicializar Financial Handler
+		financialHandler := handlers.NewFinancialHandler(financialService)
+
+		// Adicionar as rotas financeiras no grupo protegido:
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
+
+			// Rotas de Anuidades
+			r.Post("/api/financial/subscriptions", financialHandler.CreateSubscription)
+			r.Get("/api/financial/subscriptions", financialHandler.ListSubscriptions)
+			r.Get("/api/financial/subscriptions/{id}", financialHandler.GetSubscriptionByID)
+
+			// Rotas de Pagamentos
+			r.Post("/api/financial/payments", financialHandler.CreatePayment)
+			r.Get("/api/financial/payments", financialHandler.ListPayments)
+			r.Get("/api/financial/payments/{id}", financialHandler.GetPaymentByID)
+			r.Patch("/api/financial/payments/{id}/status", financialHandler.UpdatePaymentStatus)
+
+			// Rotas de Dashboard Financeiro
+			r.Get("/api/financial/patient/{id}", financialHandler.GetPatientFinancialStatus)
+			r.Get("/api/financial/overdue", financialHandler.GetOverdueSubscriptions)
+		})
 		// -----Rotas de presciçoes/receitas médicas ----
 		prescriptionService := services.NewPrescriptionService(database.DB)
 		prescriptionHandler := handlers.NewPrescriptionHandler(prescriptionService)

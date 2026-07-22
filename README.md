@@ -55,40 +55,37 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 11: Sistema de pedidos
+## 📁 ETAPA 12: Sistema Financeiro(Anuidades e pagamentos)
 
 Objetivo desta etapa:
-    O objetivo desta etapa é criar o sistema completo de pedidos, que é o coração do negócio. Está etapa integra pacientes, receitas, produtos e estoque.
-
+    Nesta etapa será implementada o sistema financeiro completo, incluíndo anuídade e pagamentos. Esta parte do projeto é importante para a sustentabilidade da associação.
 
 📁 ESTRUTURA QUE VAMOS CRIAR
 
 ```bash
-
 cannacare-app-v3/
 ├── internal/
 │   ├── models/
-│   │   ├── order.go              # ✅ Já existe
-│   │   └── order_item.go         # ✅ Já existe
+│   │   ├── subscription.go          # ✅ Já existe
+│   │   └── payment.go               # ✅ Já existe
 │   ├── services/
 │   │   ├── ... (todos os services existentes)
-│   │   └── order_service.go      # 🆕 Lógica para pedidos
+│   │   └── financial_service.go     # 🆕 Lógica para financeiro
 │   ├── handlers/
 │   │   ├── ... (todos os handlers existentes)
-│   │   └── order_handler.go      # 🆕 Endpoints para pedidos
+│   │   └── financial_handler.go     # 🆕 Endpoints para financeiro
 │   ├── middleware/
-│   │   └── auth.go               # ✅ Já existe
+│   │   └── auth.go                  # ✅ Já existe
 │   └── utils/
-│       ├── response.go           # ✅ Já existe
-│       └── validators.go         # ✅ Já existe
+│       ├── response.go              # ✅ Já existe
+│       └── validators.go            # ✅ Já existe
 ├── pkg/
 │   └── jwt/
-│       └── jwt.go                # ✅ Já existe
-└── cmd/api/main.go               # 🔄 Vamos atualizar
-
+│       └── jwt.go                   # ✅ Já existe
+└── cmd/api/main.go                  # 🔄 Vamos atualizar
 ```
 
-## ✅ TESTAR OS ENDPOINTS DE PEDIDOS
+## ✅ TESTAR OS ENDPOINTS FINANCEIROS
 
 Fazer login
 
@@ -99,97 +96,89 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   | jq -r '.data.token')
 
 ``` 
-
-1. Criar um pedido
-Primeiro, pegue os IDs necessários:
-- Paciente aprovado 0f40331c-ca06-43bb-8618-06d64ee58e7b
-- Prescrição válida 2517459c-8d34-41ea-9319-d0bcd9136f05
-- Lote com estoque disponível 430009b4-b384-4bac-94d8-7dd0a28b672a  / 253166ea-38de-46f5-bb94-cdcea3f4d84b
-
-
+1. Criar anuidade
 ```bash
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODM0NzE4LCJuYmYiOjE3ODQ3NDgzMTgsImlhdCI6MTc4NDc0ODMxOH0.Hudp65K1QasCh1oaZrLPJQmVl2cj1vJA4Y6b7x9bJEc"
-PATIENT_ID="0f40331c-ca06-43bb-8618-06d64ee58e7b"
-PRESCRIPTION_ID="2517459c-8d34-41ea-9319-d0bcd9136f05"
-LOT_ID="430009b4-b384-4bac-94d8-7dd0a28b672a"
 
-curl -X POST http://localhost:8080/api/orders \
+PATIENT_ID="650d04bb-a4e2-40fe-ae1b-3602dcb20f6d"
+curl -X POST http://localhost:8080/api/financial/subscriptions \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "patient_id": "'$PATIENT_ID'",
-    "prescription_id": "'$PRESCRIPTION_ID'",
-    "items": [
-      {
-        "product_lot_id": "'$LOT_ID'",
-        "quantity": 2,
-        "unit_price": 150.00
-      }
-    ],
-    "notes": "Pedido de teste"
-  }'
-
-``` 
-
-2. Atualizar status do pedido
-```bash
-TOKEN="seu-token"
-ORDER_ID="id-do-seu-pedido"
-curl -X PATCH "http://localhost:8080/api/orders/$ORDER_ID/status" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "status": "correio",
-    "notes": "Produto enviado pelo correio"
+    "due_date": "2027-12-31T00:00:00Z",
+    "amount": 150.00
   }' | jq '.'
 
 ``` 
-![alt text](image-6.png)
+![alt text](image-10.png)
 
 
-3. Gerar etiqueta
+2. Listar anuidades
 ```bash
-curl -X POST "http://localhost:8080/api/orders/$ORDER_ID/label" \
+
+curl -X GET "http://localhost:8080/api/financial/subscriptions" \
   -H "Authorization: Bearer $TOKEN" \
   | jq '.'
 
 ``` 
-![alt text](image-7.png)
 
-4. Adicionar rastreio
+3. Registrar pagamento (anuidade)
 ```bash
 
-ORDER_ID="51a4542a-8ddf-48b6-9381-8c7b4d0ab8e6"
+SUBSCRIPTION_ID="93a15065-8722-4caa-a56d-93e16c2d7525"
 
-curl -X PATCH "http://localhost:8080/api/orders/$ORDER_ID/tracking" \
+curl -X POST http://localhost:8080/api/financial/payments \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "tracking_code": "BR123456789BR",
-    "shipping_carrier": "Correios"
+    "patient_id": "'$PATIENT_ID'",
+    "subscription_id": "'$SUBSCRIPTION_ID'",
+    "payment_type": "anuidade",
+    "payment_method": "pix",
+    "amount": 150.00,
+    "installments": 1
   }' | jq '.'
+
 
 ``` 
-![alt text](image-8.png)
 
-## (Opcional) Atualizar para "entregue"
-Quando o paciente receber o produto:
+4. Listar pagamentos
 ```bash
-curl -X PATCH "http://localhost:8080/api/orders/$ORDER_ID/status" \
+curl -X GET "http://localhost:8080/api/financial/payments" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.'
+
+
+``` 
+
+5. Atualizar status do pagamento
+```bash
+
+PAYMENT_ID="id-do-pagamento"
+
+curl -X PATCH "http://localhost:8080/api/financial/payments/$PAYMENT_ID/status" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{
-    "status": "entregue",
-    "notes": "Pedido entregue ao paciente"
-  }' | jq '.'
-```
-![alt text](image-9.png)
+  -d '{"status": "pago"}' | jq '.'
 
-5. Listar pedidos de um paciente
+
+``` 
+6. Status financeiro do paciente
 ```bash
-curl -X GET "http://localhost:8080/api/orders/patient/$PATIENT_ID" \
+
+curl -X GET "http://localhost:8080/api/financial/patient/$PATIENT_ID" \
   -H "Authorization: Bearer $TOKEN" \
   | jq '.'
 
 ``` 
+7. Anuidades em atraso
+```bash
+
+curl -X GET "http://localhost:8080/api/financial/overdue" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.'
+
+
+``` 
+
 
