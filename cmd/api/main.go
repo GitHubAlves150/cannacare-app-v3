@@ -197,6 +197,26 @@ func main() {
 			r.Delete("/api/anamnesis/{id}", anamneseHandler.Delete)
 		})
 
+		// Inicializar Dashboard Service
+		// --- Rotas de dashboard ----
+		dashboardService := services.NewDashboardService(database.DB)
+
+		// Inicializar Dashboard Handler
+		dashboardHandler := handlers.NewDashboardHandler(dashboardService)
+
+		// Adicionar as rotas de dashboard no grupo protegido:
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "coordenacao"))
+
+			// Dashboard Overview
+			r.Get("/api/dashboard/overview", dashboardHandler.GetOverview)
+
+			// Relatórios
+			r.Get("/api/dashboard/patients", dashboardHandler.GetPatientReport)
+			r.Get("/api/dashboard/expired-prescriptions", dashboardHandler.GetExpiredPrescriptions)
+			r.Get("/api/dashboard/top-doctors", dashboardHandler.GetTopDoctors)
+			r.Get("/api/dashboard/low-stock", dashboardHandler.GetLowStock)
+		})
 		// Inicializar Financial Services
 		// ----Rotas de financeiro ----
 		financialService := services.NewFinancialService(database.DB)

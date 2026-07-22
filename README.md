@@ -55,37 +55,33 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 12: Sistema Financeiro(Anuidades e pagamentos)
+## 📁 ETAPA 13: DashBoard de relatórios
 
 Objetivo desta etapa:
-    Nesta etapa será implementada o sistema financeiro completo, incluíndo anuídade e pagamentos. Esta parte do projeto é importante para a sustentabilidade da associação.
+    Nesta etapa será sistematizado o sistema de dashboard e relatórios. esta etapa é importante por que a gestão da associação precisa emitir relatórios frequentes, fornecendo visibilidade sobre todos os aspectos do negócio.
 
 📁 ESTRUTURA QUE VAMOS CRIAR
-
 ```bash
 cannacare-app-v3/
 ├── internal/
-│   ├── models/
-│   │   ├── subscription.go          # ✅ Já existe
-│   │   └── payment.go               # ✅ Já existe
 │   ├── services/
 │   │   ├── ... (todos os services existentes)
-│   │   └── financial_service.go     # 🆕 Lógica para financeiro
+│   │   └── dashboard_service.go    # 🆕 Lógica para dashboard
 │   ├── handlers/
 │   │   ├── ... (todos os handlers existentes)
-│   │   └── financial_handler.go     # 🆕 Endpoints para financeiro
+│   │   └── dashboard_handler.go    # 🆕 Endpoints para dashboard
 │   ├── middleware/
-│   │   └── auth.go                  # ✅ Já existe
+│   │   └── auth.go                 # ✅ Já existe
 │   └── utils/
-│       ├── response.go              # ✅ Já existe
-│       └── validators.go            # ✅ Já existe
+│       ├── response.go             # ✅ Já existe
+│       └── validators.go           # ✅ Já existe
 ├── pkg/
 │   └── jwt/
-│       └── jwt.go                   # ✅ Já existe
-└── cmd/api/main.go                  # 🔄 Vamos atualizar
+│       └── jwt.go                  # ✅ Já existe
+└── cmd/api/main.go                 # 🔄 Vamos atualizar
 ```
 
-## ✅ TESTAR OS ENDPOINTS FINANCEIROS
+## ✅ TESTAR OS ENDPOINTS DE DASHBOARD
 
 Fazer login
 
@@ -95,90 +91,71 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   -d '{"email":"admin@cannacare.com","password":"admin123"}' \
   | jq -r '.data.token')
 
-``` 
-1. Criar anuidade
-```bash
+  # Ou
 
-PATIENT_ID="650d04bb-a4e2-40fe-ae1b-3602dcb20f6d"
-curl -X POST http://localhost:8080/api/financial/subscriptions \
-  -H "Authorization: Bearer $TOKEN" \
+  curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{
-    "patient_id": "'$PATIENT_ID'",
-    "due_date": "2027-12-31T00:00:00Z",
-    "amount": 150.00
-  }' | jq '.'
+  -d '{"email":"admin@cannacare.com","password":"admin123"}' | jq '.'
+  
+  
 
 ``` 
-![alt text](image-10.png)
-
-
-2. Listar anuidades
+1. Visão geral do sistema
 ```bash
 
-curl -X GET "http://localhost:8080/api/financial/subscriptions" \
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODQwNjI1LCJuYmYiOjE3ODQ3NTQyMjUsImlhdCI6MTc4NDc1NDIyNX0.x46WLxE1WFTipiQEFoEsmV-8XdFf-6lRGLT7kKDiPZw"
+
+curl -X GET "http://localhost:8080/api/dashboard/overview" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.'
+``` 
+![alt text](image-11.png)
+
+2. Relatório de pacientes
+```bash
+
+curl -X GET "http://localhost:8080/api/dashboard/patients" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.'
+``` 
+3. Receitas vencidas
+```bash
+
+curl -X GET "http://localhost:8080/api/dashboard/expired-prescriptions" \
   -H "Authorization: Bearer $TOKEN" \
   | jq '.'
 
 ``` 
-
-3. Registrar pagamento (anuidade)
+4. Médicos que mais prescrevem
 ```bash
-
-SUBSCRIPTION_ID="93a15065-8722-4caa-a56d-93e16c2d7525"
-
-curl -X POST http://localhost:8080/api/financial/payments \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "patient_id": "'$PATIENT_ID'",
-    "subscription_id": "'$SUBSCRIPTION_ID'",
-    "payment_type": "anuidade",
-    "payment_method": "pix",
-    "amount": 150.00,
-    "installments": 1
-  }' | jq '.'
-
-
-``` 
-
-4. Listar pagamentos
-```bash
-curl -X GET "http://localhost:8080/api/financial/payments" \
-  -H "Authorization: Bearer $TOKEN" \
-  | jq '.'
-
-
-``` 
-
-5. Atualizar status do pagamento
-```bash
-
-PAYMENT_ID="id-do-pagamento"
-
-curl -X PATCH "http://localhost:8080/api/financial/payments/$PAYMENT_ID/status" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "pago"}' | jq '.'
-
-
-``` 
-6. Status financeiro do paciente
-```bash
-
-curl -X GET "http://localhost:8080/api/financial/patient/$PATIENT_ID" \
+curl -X GET "http://localhost:8080/api/dashboard/top-doctors" \
   -H "Authorization: Bearer $TOKEN" \
   | jq '.'
 
 ``` 
-7. Anuidades em atraso
+5. Produtos com estoque baixo
 ```bash
 
-curl -X GET "http://localhost:8080/api/financial/overdue" \
+curl -X GET "http://localhost:8080/api/dashboard/low-stock" \
   -H "Authorization: Bearer $TOKEN" \
   | jq '.'
+``` 
+xxxx
+```bash
 
+xxxxxxx
 
 ``` 
+xxxx
+```bash
 
+xxxxxxx
+
+``` 
+xxxx
+```bash
+
+xxxxxxx
+
+``` 
 
