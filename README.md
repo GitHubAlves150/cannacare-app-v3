@@ -59,3 +59,18 @@ git checkout -b etapa-15-testes
 
 Objetivo desta etapa:
     Reservei esta etapa para criar testes automatizados.
+
+```bash
+# Todas as rotas funcionando:
+✅ /api/auth/*        - Autenticação
+✅ /api/patients/*    - Pacientes
+✅ /api/doctors/*     - Médicos
+✅ /api/prescriptions/* - Receitas
+✅ /api/orders/*      - Pedidos
+✅ /api/stock/*       - Estoque
+✅ /api/financial/*   - Financeiro
+✅ /api/dashboard/*   - Dashboard
+✅ /api/documents/*   - Documentos
+✅ /api/products/*    - Produtos
+✅ /api/anamnesis/*   - Acolhimento
+``` 
