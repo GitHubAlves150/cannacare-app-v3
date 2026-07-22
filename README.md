@@ -55,10 +55,10 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 13: DashBoard de relatórios
+## 📁 ETAPA 14: Middleware e permissões(Finalização)
 
 Objetivo desta etapa:
-    Nesta etapa será sistematizado o sistema de dashboard e relatórios. esta etapa é importante por que a gestão da associação precisa emitir relatórios frequentes, fornecendo visibilidade sobre todos os aspectos do negócio.
+    Nesta etapa terminamos a parte de middlewares e permissões, garantindo que cada perfil de usuário tenha acesso apenas ao que realmente precisa. também vamos adicionar validações extras e logs.
 
 📁 ESTRUTURA QUE VAMOS CRIAR
 ```bash
@@ -100,62 +100,8 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   
 
 ``` 
-1. Visão geral do sistema
-```bash
-
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODQwNjI1LCJuYmYiOjE3ODQ3NTQyMjUsImlhdCI6MTc4NDc1NDIyNX0.x46WLxE1WFTipiQEFoEsmV-8XdFf-6lRGLT7kKDiPZw"
-
-curl -X GET "http://localhost:8080/api/dashboard/overview" \
-  -H "Authorization: Bearer $TOKEN" \
-  | jq '.'
-``` 
-![alt text](image-11.png)
-
-2. Relatório de pacientes
-```bash
-
-curl -X GET "http://localhost:8080/api/dashboard/patients" \
-  -H "Authorization: Bearer $TOKEN" \
-  | jq '.'
-``` 
-3. Receitas vencidas
-```bash
-
-curl -X GET "http://localhost:8080/api/dashboard/expired-prescriptions" \
-  -H "Authorization: Bearer $TOKEN" \
-  | jq '.'
-
-``` 
-4. Médicos que mais prescrevem
-```bash
-curl -X GET "http://localhost:8080/api/dashboard/top-doctors" \
-  -H "Authorization: Bearer $TOKEN" \
-  | jq '.'
-
-``` 
-5. Produtos com estoque baixo
-```bash
-
-curl -X GET "http://localhost:8080/api/dashboard/low-stock" \
-  -H "Authorization: Bearer $TOKEN" \
-  | jq '.'
-``` 
 xxxx
 ```bash
-
-xxxxxxx
-
-``` 
-xxxx
-```bash
-
-xxxxxxx
+xxxxxx
 
 ``` 
-xxxx
-```bash
-
-xxxxxxx
-
-``` 
-

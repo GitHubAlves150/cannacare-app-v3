@@ -150,8 +150,8 @@ func (s *AuthService) Login(req LoginRequest) (*AuthResponse, error) {
 		return nil, errors.New("email ou senha incorretos")
 	}
 
-	// --- 5. Gerar token JWT ---
-	token, err := s.jwtService.GenerateToken(user.ID, user.Email, user.Role)
+		// --- 5. Gerar token JWT ---
+	token, err := s.jwtService.GenerateToken(user.ID, user.Email, user.Name, user.Role)
 	if err != nil {
 		return nil, errors.New("erro ao gerar token de autenticação")
 	}

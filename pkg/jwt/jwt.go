@@ -8,18 +8,28 @@ import (
 	"github.com/google/uuid"
 )
 
+// ================================================================
+// STRUCT CLAIMS
+// ================================================================
 type Claims struct {
 	UserID string `json:"user_id"`
 	Email  string `json:"email"`
+	Name   string `json:"name"`   // 🆕 ADICIONAR CAMPO NAME
 	Role   string `json:"role"`
 	jwt.RegisteredClaims
 }
 
+// ================================================================
+// STRUCT JWTSERVICE
+// ================================================================
 type JWTService struct {
 	secretKey string
 	expiresIn time.Duration
 }
 
+// ================================================================
+// FUNÇÃO NEWJWTSERVICE()
+// ================================================================
 func NewJWTService(secretKey string, expiresIn time.Duration) *JWTService {
 	return &JWTService{
 		secretKey: secretKey,
@@ -28,17 +38,20 @@ func NewJWTService(secretKey string, expiresIn time.Duration) *JWTService {
 }
 
 // ================================================================
-// MÉTODO EXPIRESIN()
+// FUNÇÃO EXPIRESIN()
 // ================================================================
-// Retorna o tempo de expiração do token
 func (s *JWTService) ExpiresIn() time.Duration {
 	return s.expiresIn
 }
 
-func (s *JWTService) GenerateToken(userID uuid.UUID, email, role string) (string, error) {
+// ================================================================
+// FUNÇÃO GENERATETOKEN()
+// ================================================================
+func (s *JWTService) GenerateToken(userID uuid.UUID, email, name, role string) (string, error) {
 	claims := Claims{
 		UserID: userID.String(),
 		Email:  email,
+		Name:   name,   // 🆕 ADICIONAR NAME
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.expiresIn)),
@@ -51,6 +64,9 @@ func (s *JWTService) GenerateToken(userID uuid.UUID, email, role string) (string
 	return token.SignedString([]byte(s.secretKey))
 }
 
+// ================================================================
+// FUNÇÃO VALIDATETOKEN()
+// ================================================================
 func (s *JWTService) ValidateToken(tokenString string) (*Claims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {

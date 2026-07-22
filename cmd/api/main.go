@@ -50,11 +50,27 @@ func main() {
 
 	authService := services.NewAuthService(database.DB, jwtService)
 	doctorService := services.NewDoctorService(database.DB)
-	patientService := services.NewPatientService(database.DB) // 🆕
+	patientService := services.NewPatientService(database.DB)
+	documentService := services.NewDocumentService(database.DB)
+	prescriptionService := services.NewPrescriptionService(database.DB)
+	anamneseService := services.NewAnamneseService(database.DB)
+	productService := services.NewProductService(database.DB)
+	stockService := services.NewStockService(database.DB)
+	orderService := services.NewOrderService(database.DB)
+	financialService := services.NewFinancialService(database.DB)
+	dashboardService := services.NewDashboardService(database.DB)
 
 	authHandler := handlers.NewAuthHandler(authService)
 	doctorHandler := handlers.NewDoctorHandler(doctorService)
-	patientHandler := handlers.NewPatientHandler(patientService) // 🆕
+	patientHandler := handlers.NewPatientHandler(patientService)
+	documentHandler := handlers.NewDocumentHandler(documentService)
+	prescriptionHandler := handlers.NewPrescriptionHandler(prescriptionService)
+	anamneseHandler := handlers.NewAnamneseHandler(anamneseService)
+	productHandler := handlers.NewProductHandler(productService)
+	stockHandler := handlers.NewStockHandler(stockService)
+	orderHandler := handlers.NewOrderHandler(orderService)
+	financialHandler := handlers.NewFinancialHandler(financialService)
+	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
 
 	// ============================================================
 	// PASSO 5: Configurar rotas
@@ -62,8 +78,10 @@ func main() {
 	log.Println("🛣️ Configurando rotas...")
 	r := chi.NewRouter()
 
+	// Middlewares globais
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
+	r.Use(middleware.LoggerMiddleware) // nosso logger
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -77,10 +95,6 @@ func main() {
 	// ============================================================
 	r.Get("/health", healthCheckHandler)
 	r.Get("/", welcomeHandler)
-
-	// ============================================================
-	// ROTAS DE AUTENTICAÇÃO
-	// ============================================================
 	r.Post("/api/auth/register", authHandler.Register)
 	r.Post("/api/auth/login", authHandler.Login)
 
@@ -101,10 +115,9 @@ func main() {
 			})
 		})
 
-		// --- Rotas de Médicos ---
+		// --- Médicos (admin, secretaria, coordenacao) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
-
 			r.Post("/api/doctors", doctorHandler.Create)
 			r.Get("/api/doctors", doctorHandler.List)
 			r.Get("/api/doctors/top", doctorHandler.GetTopDoctors)
@@ -113,144 +126,32 @@ func main() {
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
 		})
 
-		// Inicializar Order Service
-		// --- Rotas pedidos ----
-		orderService := services.NewOrderService(database.DB)
-
-		// Inicializar Order Handler
-		orderHandler := handlers.NewOrderHandler(orderService)
-
-		// Adicionar as rotas de pedidos no grupo protegido:
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
-
-			// Rotas de Pedidos
-			r.Post("/api/orders", orderHandler.Create)
-			r.Get("/api/orders", orderHandler.List)
-			r.Get("/api/orders/{id}", orderHandler.GetByID)
-			r.Get("/api/orders/patient/{id}", orderHandler.GetByPatient)
-			r.Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
-			r.Patch("/api/orders/{id}/tracking", orderHandler.UpdateTracking)
-			r.Post("/api/orders/{id}/label", orderHandler.GenerateLabel)
-		})
-
-		// Inicializar Stock Service
-		// --- Rotas estoque ----
-		stockService := services.NewStockService(database.DB)
-
-		// Inicializar Stock Handler
-		stockHandler := handlers.NewStockHandler(stockService)
-
-		// Adicionar as rotas de estoque no grupo protegido:
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
-
-			// Rotas de Estoque
-			r.Post("/api/stock/lots", stockHandler.CreateLot)
-			r.Get("/api/stock/lots", stockHandler.ListLots)
-			r.Get("/api/stock/lots/{id}", stockHandler.GetLotByID)
-			r.Post("/api/stock/adjust", stockHandler.AdjustStock)
-			r.Get("/api/stock/movements", stockHandler.GetMovements)
-			r.Get("/api/stock/expiring", stockHandler.GetExpiringLots)
-			r.Get("/api/stock/low-stock", stockHandler.GetLowStock)
-			r.Get("/api/stock/summary", stockHandler.GetStockSummary)
-		})
-
-		// Inicializar Product Service
-		// --- Rotas de produtos ----
-		productService := services.NewProductService(database.DB)
-
-		// Inicializar Product Handler
-		productHandler := handlers.NewProductHandler(productService)
-
-		// Adicionar as rotas de produtos no grupo protegido:
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
-
-			// Rotas de Produtos
-			r.Post("/api/products", productHandler.Create)
-			r.Get("/api/products", productHandler.List)
-			r.Get("/api/products/low-stock", productHandler.GetLowStock)
-			r.Get("/api/products/stock-summary", productHandler.GetStockSummary)
-			r.Get("/api/products/{id}", productHandler.GetByID)
-			r.Put("/api/products/{id}", productHandler.Update)
-			r.Delete("/api/products/{id}", productHandler.Delete)
-		})
-
-		// Inicializar Anamnese Service
-		// ----Rotas anamenese -----
-		anamneseService := services.NewAnamneseService(database.DB)
-
-		// Inicializar Anamnese Handler
-		anamneseHandler := handlers.NewAnamneseHandler(anamneseService)
-
-		// Adicionar as rotas de anamnese no grupo protegido:
+		// --- Pacientes (admin, secretaria, coordenacao, acolhimento) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
-
-			// Rotas de Anamnese
-			r.Post("/api/patients/{id}/anamnesis", anamneseHandler.Create)
-			r.Get("/api/patients/{id}/anamnesis", anamneseHandler.GetByPatient)
-			r.Get("/api/anamnesis", anamneseHandler.List)
-			r.Get("/api/anamnesis/{id}", anamneseHandler.GetByID)
-			r.Put("/api/anamnesis/{id}", anamneseHandler.Update)
-			r.Delete("/api/anamnesis/{id}", anamneseHandler.Delete)
+			r.Post("/api/patients", patientHandler.Create)
+			r.Get("/api/patients", patientHandler.List)
+			r.Get("/api/patients/stats", patientHandler.GetStatistics)
+			r.Get("/api/patients/{id}", patientHandler.GetByID)
+			r.Put("/api/patients/{id}", patientHandler.Update)
+			r.Patch("/api/patients/{id}/status", patientHandler.UpdateStatus)
+			r.Delete("/api/patients/{id}", patientHandler.Delete)
 		})
 
-		// Inicializar Dashboard Service
-		// --- Rotas de dashboard ----
-		dashboardService := services.NewDashboardService(database.DB)
-
-		// Inicializar Dashboard Handler
-		dashboardHandler := handlers.NewDashboardHandler(dashboardService)
-
-		// Adicionar as rotas de dashboard no grupo protegido:
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.RoleMiddleware("admin", "coordenacao"))
-
-			// Dashboard Overview
-			r.Get("/api/dashboard/overview", dashboardHandler.GetOverview)
-
-			// Relatórios
-			r.Get("/api/dashboard/patients", dashboardHandler.GetPatientReport)
-			r.Get("/api/dashboard/expired-prescriptions", dashboardHandler.GetExpiredPrescriptions)
-			r.Get("/api/dashboard/top-doctors", dashboardHandler.GetTopDoctors)
-			r.Get("/api/dashboard/low-stock", dashboardHandler.GetLowStock)
-		})
-		// Inicializar Financial Services
-		// ----Rotas de financeiro ----
-		financialService := services.NewFinancialService(database.DB)
-
-		// Inicializar Financial Handler
-		financialHandler := handlers.NewFinancialHandler(financialService)
-
-		// Adicionar as rotas financeiras no grupo protegido:
-		r.Group(func(r chi.Router) {
-			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
-
-			// Rotas de Anuidades
-			r.Post("/api/financial/subscriptions", financialHandler.CreateSubscription)
-			r.Get("/api/financial/subscriptions", financialHandler.ListSubscriptions)
-			r.Get("/api/financial/subscriptions/{id}", financialHandler.GetSubscriptionByID)
-
-			// Rotas de Pagamentos
-			r.Post("/api/financial/payments", financialHandler.CreatePayment)
-			r.Get("/api/financial/payments", financialHandler.ListPayments)
-			r.Get("/api/financial/payments/{id}", financialHandler.GetPaymentByID)
-			r.Patch("/api/financial/payments/{id}/status", financialHandler.UpdatePaymentStatus)
-
-			// Rotas de Dashboard Financeiro
-			r.Get("/api/financial/patient/{id}", financialHandler.GetPatientFinancialStatus)
-			r.Get("/api/financial/overdue", financialHandler.GetOverdueSubscriptions)
-		})
-		// -----Rotas de presciçoes/receitas médicas ----
-		prescriptionService := services.NewPrescriptionService(database.DB)
-		prescriptionHandler := handlers.NewPrescriptionHandler(prescriptionService)
-		// Adicionar as rotas de prescrições no grupo protegido:
+		// --- Documentos (admin, secretaria, coordenacao, acolhimento) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
+			r.Post("/api/patients/{id}/documents", documentHandler.Upload)
+			r.Get("/api/patients/{id}/documents", documentHandler.ListByPatient)
+			r.Get("/api/documents/{id}", documentHandler.GetByID)
+			r.Get("/api/documents/{id}/download", documentHandler.Download)
+			r.Patch("/api/documents/{id}/status", documentHandler.UpdateStatus)
+			r.Delete("/api/documents/{id}", documentHandler.Delete)
+		})
 
-			// Rotas de Prescrições
+		// --- Prescrições (admin, secretaria, coordenacao, acolhimento) ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
 			r.Post("/api/prescriptions", prescriptionHandler.Create)
 			r.Get("/api/prescriptions", prescriptionHandler.List)
 			r.Get("/api/prescriptions/expired", prescriptionHandler.GetExpired)
@@ -261,35 +162,79 @@ func main() {
 			r.Post("/api/prescriptions/update-status", prescriptionHandler.UpdateAllStatus)
 		})
 
-		// --- 🆕 Rotas de Pacientes ---
-		// Inicializar serviços
-		documentService := services.NewDocumentService(database.DB)
-
-		// Inicializar handlers
-		documentHandler := handlers.NewDocumentHandler(documentService)
-		r.Group(func(r chi.Router) {
-			// Acesso para admin, secretaria, coordenacao e acolhimento
-			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
-
-			r.Post("/api/patients", patientHandler.Create)
-			r.Get("/api/patients", patientHandler.List)
-			r.Get("/api/patients/stats", patientHandler.GetStatistics)
-			r.Get("/api/patients/{id}", patientHandler.GetByID)
-			r.Put("/api/patients/{id}", patientHandler.Update)
-			r.Patch("/api/patients/{id}/status", patientHandler.UpdateStatus)
-			r.Delete("/api/patients/{id}", patientHandler.Delete)
-		})
+		// --- Anamnese (admin, secretaria, coordenacao, acolhimento) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
-
-			r.Post("/api/patients/{id}/documents", documentHandler.Upload)
-			r.Get("/api/patients/{id}/documents", documentHandler.ListByPatient)
-			r.Get("/api/documents/{id}", documentHandler.GetByID)
-			r.Get("/api/documents/{id}/download", documentHandler.Download)
-			r.Patch("/api/documents/{id}/status", documentHandler.UpdateStatus)
-			r.Delete("/api/documents/{id}", documentHandler.Delete)
+			r.Post("/api/patients/{id}/anamnesis", anamneseHandler.Create)
+			r.Get("/api/patients/{id}/anamnesis", anamneseHandler.GetByPatient)
+			r.Get("/api/anamnesis", anamneseHandler.List)
+			r.Get("/api/anamnesis/{id}", anamneseHandler.GetByID)
+			r.Put("/api/anamnesis/{id}", anamneseHandler.Update)
+			r.Delete("/api/anamnesis/{id}", anamneseHandler.Delete)
 		})
-		// --- Rota Admin ---
+
+		// --- Produtos (admin, secretaria, coordenacao) ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
+			r.Post("/api/products", productHandler.Create)
+			r.Get("/api/products", productHandler.List)
+			r.Get("/api/products/low-stock", productHandler.GetLowStock)
+			r.Get("/api/products/stock-summary", productHandler.GetStockSummary)
+			r.Get("/api/products/{id}", productHandler.GetByID)
+			r.Put("/api/products/{id}", productHandler.Update)
+			r.Delete("/api/products/{id}", productHandler.Delete)
+		})
+
+		// --- Estoque (admin, secretaria, coordenacao, farmacia) ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
+			r.Post("/api/stock/lots", stockHandler.CreateLot)
+			r.Get("/api/stock/lots", stockHandler.ListLots)
+			r.Get("/api/stock/lots/{id}", stockHandler.GetLotByID)
+			r.Post("/api/stock/adjust", stockHandler.AdjustStock)
+			r.Get("/api/stock/movements", stockHandler.GetMovements)
+			r.Get("/api/stock/expiring", stockHandler.GetExpiringLots)
+			r.Get("/api/stock/low-stock", stockHandler.GetLowStock)
+			r.Get("/api/stock/summary", stockHandler.GetStockSummary)
+		})
+
+		// --- Pedidos (admin, secretaria, coordenacao, farmacia) ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
+			r.Post("/api/orders", orderHandler.Create)
+			r.Get("/api/orders", orderHandler.List)
+			r.Get("/api/orders/{id}", orderHandler.GetByID)
+			r.Get("/api/orders/patient/{id}", orderHandler.GetByPatient)
+			r.Patch("/api/orders/{id}/status", orderHandler.UpdateStatus)
+			r.Patch("/api/orders/{id}/tracking", orderHandler.UpdateTracking)
+			r.Post("/api/orders/{id}/label", orderHandler.GenerateLabel)
+		})
+
+		// --- Financeiro (admin, secretaria, coordenacao) ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
+			r.Post("/api/financial/subscriptions", financialHandler.CreateSubscription)
+			r.Get("/api/financial/subscriptions", financialHandler.ListSubscriptions)
+			r.Get("/api/financial/subscriptions/{id}", financialHandler.GetSubscriptionByID)
+			r.Post("/api/financial/payments", financialHandler.CreatePayment)
+			r.Get("/api/financial/payments", financialHandler.ListPayments)
+			r.Get("/api/financial/payments/{id}", financialHandler.GetPaymentByID)
+			r.Patch("/api/financial/payments/{id}/status", financialHandler.UpdatePaymentStatus)
+			r.Get("/api/financial/patient/{id}", financialHandler.GetPatientFinancialStatus)
+			r.Get("/api/financial/overdue", financialHandler.GetOverdueSubscriptions)
+		})
+
+		// --- Dashboard (admin, coordenacao) ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "coordenacao"))
+			r.Get("/api/dashboard/overview", dashboardHandler.GetOverview)
+			r.Get("/api/dashboard/patients", dashboardHandler.GetPatientReport)
+			r.Get("/api/dashboard/expired-prescriptions", dashboardHandler.GetExpiredPrescriptions)
+			r.Get("/api/dashboard/top-doctors", dashboardHandler.GetTopDoctors)
+			r.Get("/api/dashboard/low-stock", dashboardHandler.GetLowStock)
+		})
+
+		// --- Admin Only ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin"))
 			r.Get("/api/admin", func(w http.ResponseWriter, r *http.Request) {
@@ -308,12 +253,19 @@ func main() {
 	log.Println("")
 	log.Println("🚀 Servidor iniciado em http://localhost" + addr)
 	log.Println("📊 Health check:        http://localhost" + addr + "/health")
-	log.Println("📝 Register:            POST http://localhost" + addr + "/api/auth/register")
-	log.Println("🔐 Login:               POST http://localhost" + addr + "/api/auth/login")
-	log.Println("👨‍⚕️ Doctors:            http://localhost" + addr + "/api/doctors")
-	log.Println("👤 Patients:            http://localhost" + addr + "/api/patients")
-	log.Println("🔒 Protected:           GET  http://localhost" + addr + "/api/protected")
-	log.Println("🔑 Admin:               GET  http://localhost" + addr + "/api/admin")
+	log.Println("")
+	log.Println("📋 Documentação da API:")
+	log.Println("   🔐 Auth:      /api/auth/register, /api/auth/login")
+	log.Println("   👨‍⚕️ Doctors:   /api/doctors")
+	log.Println("   👤 Patients:  /api/patients")
+	log.Println("   📄 Documents: /api/patients/{id}/documents")
+	log.Println("   💊 Prescriptions: /api/prescriptions")
+	log.Println("   📝 Anamnese:  /api/patients/{id}/anamnesis")
+	log.Println("   📦 Products:  /api/products")
+	log.Println("   📊 Stock:     /api/stock")
+	log.Println("   🛒 Orders:    /api/orders")
+	log.Println("   💰 Financial: /api/financial")
+	log.Println("   📈 Dashboard: /api/dashboard")
 	log.Println("")
 	log.Println("💡 Pressione CTRL+C para encerrar")
 
@@ -336,7 +288,7 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		"database": "connected",
 		"message":  "CannaCare API está funcionando!",
 		"version":  "1.0.0",
-		"etapa":    "5 - Pacientes",
+		"etapa":    "14 - Middleware e Permissões",
 	})
 }
 
@@ -344,26 +296,17 @@ func welcomeHandler(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
 		"message": "🌿 Bem-vindo à API CannaCare!",
 		"version": "1.0.0",
-		"etapa":   "5 - Pacientes",
-		"endpoints": map[string]string{
-			"GET  /health":                    "Verifica o status do sistema",
-			"POST /api/auth/register":         "Registrar novo usuário",
-			"POST /api/auth/login":            "Login e obter token JWT",
-			"GET  /api/protected":             "Rota protegida (requer token)",
-			"GET  /api/admin":                 "Rota admin (requer role admin)",
-			"POST /api/doctors":               "Criar médico",
-			"GET  /api/doctors":               "Listar médicos",
-			"GET  /api/doctors/{id}":          "Buscar médico por ID",
-			"PUT  /api/doctors/{id}":          "Atualizar médico",
-			"DELETE /api/doctors/{id}":        "Remover médico",
-			"GET  /api/doctors/top":           "Médicos que mais prescrevem",
-			"POST /api/patients":              "Criar paciente",
-			"GET  /api/patients":              "Listar pacientes",
-			"GET  /api/patients/{id}":         "Buscar paciente por ID",
-			"PUT  /api/patients/{id}":         "Atualizar paciente",
-			"PATCH /api/patients/{id}/status": "Mudar status do paciente",
-			"DELETE /api/patients/{id}":       "Remover paciente",
-			"GET  /api/patients/stats":        "Estatísticas de pacientes",
+		"etapa":   "14 - Middleware e Permissões",
+		"documentation": map[string]string{
+			"POST /api/auth/register":      "Registrar usuário",
+			"POST /api/auth/login":         "Login",
+			"GET  /api/doctors":            "Listar médicos",
+			"GET  /api/patients":           "Listar pacientes",
+			"GET  /api/products":           "Listar produtos",
+			"GET  /api/stock/lots":         "Listar lotes",
+			"GET  /api/orders":             "Listar pedidos",
+			"GET  /api/financial/payments": "Listar pagamentos",
+			"GET  /api/dashboard/overview": "Dashboard",
 		},
 	})
 }
