@@ -55,146 +55,122 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 5: CRUD de pacientes.
+## 📁 ETAPA 6: Implementação do sisitema de upload de documentos.
 
 Objetivo desta etapa:
 
-    O objetivo desta etapa é criar o CRUD de pacientes para, poder criar pacientes, atualizar os dados do paciente, deletar o paciente e ler os dados do paicente.
+    Nesta etapa será feito  implementação do sistema de upload de documentos para pacientes. Esta etapa é crucial para o fluxo de aprovação de pacientes.
 
- CRUD completo de pacientes
 
-    ✅ Criar paciente
+📁 ESTRUTURA QUE VAMOS CRIAR.
 
-    ✅ Listar pacientes (com filtros)
-
-    ✅ Buscar paciente por ID
-
-    ✅ Atualizar paciente
-
-    ✅ Deletar paciente (soft delete)
-
-Validações específicas
-
-    ✅ CPF único
-
-    ✅ Data de nascimento
-
-    ✅ Email válido
-
-    ✅ Telefone
-
-Status do paciente
-
-    ✅ pendente_documentacao - Aguardando documentos
-
-    ✅ em_analise - Em análise pela equipe
-
-    ✅ aprovado - Paciente aprovado
-
-    ✅ negado - Paciente reprovado
-
-    ✅ assistente_social - Em análise social
-
-Diferenciais
-
-    ✅ Associação com usuário (para acesso ao portal)
-
-    ✅ Role automática "paciente"
-
-    ✅ Paciente social (isenção de anuidade)
-
-    ____
-
-## Endpoints que vamos criar:
-
-| Método | Endpoint | Descrição |
-| :---: | :--- | :--- |
-| **POST** | `/api/patients` | Criar paciente |
-| **GET** | `/api/patients` | Listar pacientes (filtros) |
-| **GET** | `/api/patients/{id}` | Buscar paciente por ID |
-| **PUT** | `/api/patients/{id}` | Atualizar paciente |
-| **DELETE** | `/api/patients/{id}` | Deletar paciente |
-| **PATCH** | `/api/patients/{id}/status` | Mudar status do paciente |
-| **GET** | `/api/patients/{id}/documents` | Listar documentos do paciente |
-
-## 📁 ESTRUTURA QUE VAMOS CRIAR.
 ```bash
 cannacare-app-v3/
 ├── internal/
 │   ├── models/
-│   │   └── patient.go              # ✅ Já existe
+│   │   └── patient_document.go     # ✅ Já existe
 │   ├── services/
 │   │   ├── auth_service.go         # ✅ Já existe
 │   │   ├── doctor_service.go       # ✅ Já existe
-│   │   └── patient_service.go      # 🆕 Lógica de negócio para pacientes
+│   │   ├── patient_service.go      # ✅ Já existe
+│   │   └── document_service.go     # 🆕 Lógica para documentos
 │   ├── handlers/
 │   │   ├── auth_handler.go         # ✅ Já existe
 │   │   ├── doctor_handler.go       # ✅ Já existe
-│   │   └── patient_handler.go      # 🆕 Endpoints HTTP para pacientes
+│   │   ├── patient_handler.go      # ✅ Já existe
+│   │   └── document_handler.go     # 🆕 Endpoints para documentos
 │   ├── middleware/
 │   │   └── auth.go                 # ✅ Já existe
 │   └── utils/
 │       ├── response.go             # ✅ Já existe
 │       └── validators.go           # ✅ Já existe
+├── uploads/                         # 🆕 Pasta para armazenar arquivos
+│   └── documents/                   # 🆕 Subpasta para documentos
 ├── pkg/
 │   └── jwt/
 │       └── jwt.go                  # ✅ Já existe
 └── cmd/api/main.go                 # 🔄 Vamos atualizar
-
 ```
 
-## ✅ TESTAR OS ENDPOINTS DE PACIENTES.
+## ✅ TESTAR OS ENDPOINTS DE DOCUMENTOS.
 
 1. Fazer login (obter token)
-```bash
+``` bash
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@cannacare.com","password":"admin123"}'
 ```
-
-## 2. Criar paciente.
+Resposta:
 ```bash
-TOKEN="seu-token-aqui"
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODE1NTIyLCJuYmYiOjE3ODQ3MjkxMjIsImlhdCI6MTc4NDcyOTEyMn0.vKoeW_ldIaciy3bC_8gRjR6vBgEaUwim1MxAxZqdtQY",
+    "token_type": "Bearer",
+    "expires_in": 86400,
+    "user": {
+      "id": "2936db3e-caa3-4b34-999b-15b434ca3315",
+      "name": "Administrador",
+      "email": "admin@cannacare.com",
+      "role": "admin",
+      "is_active": true,
+      "last_login_at": "2026-07-22T11:05:22.713813338-03:00",
+      "created_at": "2026-07-21T13:25:18.668715-03:00"
+    }
+  }
+}
+```
+## 2. Upload de documento (RG/CPF).
+```bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODE1NTIyLCJuYmYiOjE3ODQ3MjkxMjIsImlhdCI6MTc4NDcyOTEyMn0.vKoeW_ldIaciy3bC_8gRjR6vBgEaUwim1MxAxZqdtQY"
+PATIENT_ID="2fac4ddc-5c04-4c2b-aa40-151738ee9b94"
 
-curl -X POST http://localhost:8080/api/patients \
+curl -X POST "http://localhost:8080/api/patients/$PATIENT_ID/documents" \
   -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "full_name": "João da Silva",
-    "birth_date": "1985-05-15T00:00:00Z",
-    "gender": "Masculino",
-    "cpf": "12345678901",
-    "phone": "(11) 99999-9999",
-    "whatsapp": "(11) 98888-8888",
-    "email": "joao.silva@email.com",
-    "address_street": "Rua das Flores",
-    "address_number": "123",
-    "address_neighborhood": "Centro",
-    "address_city": "São Paulo",
-    "address_state": "SP",
-    "address_zipcode": "01000-000"
-  }'
+  -F "document_type=rg_cpf" \
+  -F "file=@/caminho/para/seu/arquivo.pdf"
+
 ```
 
-## 3. Listar pacientes.
+## Resposta.
+![alt text](image-17.png)
+
+![alt text](image-18.png)
+
+## 3. Listar documentos do paciente.
 ```bash
-curl -X GET "http://localhost:8080/api/patients?page=1&limit=10" \
+curl -X GET "http://localhost:8080/api/patients/$PATIENT_ID/documents" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-## 4. Buscar paciente por ID.
-```bash
-curl -X GET "http://localhost:8080/api/patients/{id}" \
-  -H "Authorization: Bearer $TOKEN"
-```
+## Resposta.
+![alt text](image-19.png)
 
-## 5. Atualizar status do paciente.
-``` bash
-curl -X PATCH "http://localhost:8080/api/patients/{id}/status" \
+## 4. Aprovar documento.
+```bash
+DOCUMENT_ID="id-do-documento"
+
+curl -X PATCH "http://localhost:8080/api/documents/$DOCUMENT_ID/status" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "status": "em_analise",
-    "reason": "Documentos recebidos, iniciando análise"
+    "status": "aprovado",
+    "reason": "Documento válido e legível"
   }'
+
 ```
+
+## Resposta.
+![alt text](image-20.png)
+
+![alt text](image-21.png)
+
+
+## 5. Baixar documento.
+```bash
+curl -X GET "http://localhost:8080/api/documents/$DOCUMENT_ID/download" \
+  -H "Authorization: Bearer $TOKEN" \
+  --output documento.pdf
+``` 
+## Resposta - Após rodado o comando será baixado o documento com o nomo document.pdf para dentro da pasta raiz do projeto.
+![alt text](image-22.png)

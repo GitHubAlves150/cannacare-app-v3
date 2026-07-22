@@ -25,6 +25,36 @@ import (
 	"github.com/google/uuid"
 )
 
+
+type PatientDocument struct {
+	BaseModel
+
+	PatientID    uuid.UUID `gorm:"type:uuid;not null" json:"patient_id"`
+	ReviewedBy   *uuid.UUID `gorm:"type:uuid" json:"reviewed_by,omitempty"`
+
+	DocumentType string `gorm:"not null" json:"document_type"`
+	FileURL      string `gorm:"not null" json:"file_url"`
+	FileName     string `json:"file_name,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	Status       string `gorm:"default:'em_analise'" json:"status"`
+	ReviewedAt   *string `json:"reviewed_at,omitempty"`
+
+	Patient  *Patient `gorm:"foreignKey:PatientID" json:"patient,omitempty"`
+	Reviewer *User    `gorm:"foreignKey:ReviewedBy" json:"reviewer,omitempty"`
+}
+
+func (PatientDocument) TableName() string {
+	return "patient_documents"
+}
+
+
+
+
+
+
+
+/*
 // PatientDocument representa um documento do paciente
 type PatientDocument struct {
 	// === CAMPOS BASE ===
@@ -68,3 +98,5 @@ type PatientDocument struct {
 func (PatientDocument) TableName() string {
 	return "patient_documents"
 }
+
+*/

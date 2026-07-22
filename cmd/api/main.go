@@ -114,6 +114,11 @@ func main() {
 		})
 
 		// --- 🆕 Rotas de Pacientes ---
+		// Inicializar serviços
+		documentService := services.NewDocumentService(database.DB)
+
+		// Inicializar handlers
+		documentHandler := handlers.NewDocumentHandler(documentService)
 		r.Group(func(r chi.Router) {
 			// Acesso para admin, secretaria, coordenacao e acolhimento
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
@@ -126,7 +131,16 @@ func main() {
 			r.Patch("/api/patients/{id}/status", patientHandler.UpdateStatus)
 			r.Delete("/api/patients/{id}", patientHandler.Delete)
 		})
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
 
+			r.Post("/api/patients/{id}/documents", documentHandler.Upload)
+			r.Get("/api/patients/{id}/documents", documentHandler.ListByPatient)
+			r.Get("/api/documents/{id}", documentHandler.GetByID)
+			r.Get("/api/documents/{id}/download", documentHandler.Download)
+			r.Patch("/api/documents/{id}/status", documentHandler.UpdateStatus)
+			r.Delete("/api/documents/{id}", documentHandler.Delete)
+		})
 		// --- Rota Admin ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin"))
@@ -184,24 +198,24 @@ func welcomeHandler(w http.ResponseWriter, r *http.Request) {
 		"version": "1.0.0",
 		"etapa":   "5 - Pacientes",
 		"endpoints": map[string]string{
-			"GET  /health":                 "Verifica o status do sistema",
-			"POST /api/auth/register":      "Registrar novo usuário",
-			"POST /api/auth/login":         "Login e obter token JWT",
-			"GET  /api/protected":          "Rota protegida (requer token)",
-			"GET  /api/admin":              "Rota admin (requer role admin)",
-			"POST /api/doctors":            "Criar médico",
-			"GET  /api/doctors":            "Listar médicos",
-			"GET  /api/doctors/{id}":       "Buscar médico por ID",
-			"PUT  /api/doctors/{id}":       "Atualizar médico",
-			"DELETE /api/doctors/{id}":     "Remover médico",
-			"GET  /api/doctors/top":        "Médicos que mais prescrevem",
-			"POST /api/patients":           "Criar paciente",
-			"GET  /api/patients":           "Listar pacientes",
-			"GET  /api/patients/{id}":      "Buscar paciente por ID",
-			"PUT  /api/patients/{id}":      "Atualizar paciente",
+			"GET  /health":                    "Verifica o status do sistema",
+			"POST /api/auth/register":         "Registrar novo usuário",
+			"POST /api/auth/login":            "Login e obter token JWT",
+			"GET  /api/protected":             "Rota protegida (requer token)",
+			"GET  /api/admin":                 "Rota admin (requer role admin)",
+			"POST /api/doctors":               "Criar médico",
+			"GET  /api/doctors":               "Listar médicos",
+			"GET  /api/doctors/{id}":          "Buscar médico por ID",
+			"PUT  /api/doctors/{id}":          "Atualizar médico",
+			"DELETE /api/doctors/{id}":        "Remover médico",
+			"GET  /api/doctors/top":           "Médicos que mais prescrevem",
+			"POST /api/patients":              "Criar paciente",
+			"GET  /api/patients":              "Listar pacientes",
+			"GET  /api/patients/{id}":         "Buscar paciente por ID",
+			"PUT  /api/patients/{id}":         "Atualizar paciente",
 			"PATCH /api/patients/{id}/status": "Mudar status do paciente",
-			"DELETE /api/patients/{id}":    "Remover paciente",
-			"GET  /api/patients/stats":     "Estatísticas de pacientes",
+			"DELETE /api/patients/{id}":       "Remover paciente",
+			"GET  /api/patients/stats":        "Estatísticas de pacientes",
 		},
 	})
 }
