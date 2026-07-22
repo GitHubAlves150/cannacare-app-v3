@@ -55,29 +55,7 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 14: Middleware e permissões(Finalização)
+## 📁 ETAPA 15: testes automatizados
 
 Objetivo desta etapa:
-    Nesta etapa terminamos a parte de middlewares e permissões, garantindo que cada perfil de usuário tenha acesso apenas ao que realmente precisa. também vamos adicionar validações extras e logs.
-
-📁 ESTRUTURA QUE VAMOS ATUALIZAR
-```bash
-cannacare-app-v3/cannacare-app-v3/
-├── internal/
-│   ├── middleware/
-│   │   ├── auth.go                 # ✅ Já existe - vamos melhorar
-│   │   ├── permissions.go          # 🆕 Sistema de permissões
-│   │   └── logger.go               # 🆕 Logging de requisições
-│   ├── config/
-│   │   └── config.go               # ✅ Já existe
-│   ├── models/
-│   │   └── user.go                 # ✅ Já existe
-│   └── utils/
-│       └── response.go             # ✅ Já existe
-├── pkg/
-│   └── jwt/
-│       └── jwt.go                  # ✅ Já existe
-└── cmd/api/main.go                 # 🔄 Vamos atualizar
-```
-
-
+    Reservei esta etapa para criar testes automatizados.
