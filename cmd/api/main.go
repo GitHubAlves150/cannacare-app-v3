@@ -113,6 +113,25 @@ func main() {
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
 		})
 
+		// -----Rotas de presciçoes/receitas médicas ----
+		prescriptionService := services.NewPrescriptionService(database.DB)
+		prescriptionHandler := handlers.NewPrescriptionHandler(prescriptionService)
+		// Adicionar as rotas de prescrições no grupo protegido:
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
+
+			// Rotas de Prescrições
+			r.Post("/api/prescriptions", prescriptionHandler.Create)
+			r.Get("/api/prescriptions", prescriptionHandler.List)
+			r.Get("/api/prescriptions/expired", prescriptionHandler.GetExpired)
+			r.Get("/api/prescriptions/validate/{id}", prescriptionHandler.Validate)
+			r.Get("/api/prescriptions/{id}", prescriptionHandler.GetByID)
+			r.Put("/api/prescriptions/{id}", prescriptionHandler.Update)
+			r.Delete("/api/prescriptions/{id}", prescriptionHandler.Delete)
+			r.Post("/api/prescriptions/update-status", prescriptionHandler.UpdateAllStatus)
+		})
+
+		
 		// --- 🆕 Rotas de Pacientes ---
 		// Inicializar serviços
 		documentService := services.NewDocumentService(database.DB)

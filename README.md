@@ -55,122 +55,143 @@ git checkout -b etapa-14-middleware
 git checkout -b etapa-15-testes
 
 ```
-## 📁 ETAPA 6: Implementação do sisitema de upload de documentos.
+## 📁 ETAPA 7: gestãpo de prescriçôes(Receita médica).
 
 Objetivo desta etapa:
 
-    Nesta etapa será feito  implementação do sistema de upload de documentos para pacientes. Esta etapa é crucial para o fluxo de aprovação de pacientes.
-
+   Nesta etapa será implementada o sistema de gestão de prescrições/receitas médicas.
 
 📁 ESTRUTURA QUE VAMOS CRIAR.
 
 ```bash
+
 cannacare-app-v3/
 ├── internal/
 │   ├── models/
-│   │   └── patient_document.go     # ✅ Já existe
+│   │   ├── prescription.go           # ✅ Já existe
+│   │   └── prescription_item.go      # ✅ Já existe
 │   ├── services/
-│   │   ├── auth_service.go         # ✅ Já existe
-│   │   ├── doctor_service.go       # ✅ Já existe
-│   │   ├── patient_service.go      # ✅ Já existe
-│   │   └── document_service.go     # 🆕 Lógica para documentos
+│   │   ├── auth_service.go           # ✅ Já existe
+│   │   ├── doctor_service.go         # ✅ Já existe
+│   │   ├── patient_service.go        # ✅ Já existe
+│   │   ├── document_service.go       # ✅ Já existe
+│   │   └── prescription_service.go   # 🆕 Lógica para prescrições
 │   ├── handlers/
-│   │   ├── auth_handler.go         # ✅ Já existe
-│   │   ├── doctor_handler.go       # ✅ Já existe
-│   │   ├── patient_handler.go      # ✅ Já existe
-│   │   └── document_handler.go     # 🆕 Endpoints para documentos
+│   │   ├── auth_handler.go           # ✅ Já existe
+│   │   ├── doctor_handler.go         # ✅ Já existe
+│   │   ├── patient_handler.go        # ✅ Já existe
+│   │   ├── document_handler.go       # ✅ Já existe
+│   │   └── prescription_handler.go   # 🆕 Endpoints para prescrições
 │   ├── middleware/
-│   │   └── auth.go                 # ✅ Já existe
+│   │   └── auth.go                   # ✅ Já existe
 │   └── utils/
-│       ├── response.go             # ✅ Já existe
-│       └── validators.go           # ✅ Já existe
-├── uploads/                         # 🆕 Pasta para armazenar arquivos
-│   └── documents/                   # 🆕 Subpasta para documentos
+│       ├── response.go               # ✅ Já existe
+│       └── validators.go             # ✅ Já existe
 ├── pkg/
 │   └── jwt/
-│       └── jwt.go                  # ✅ Já existe
-└── cmd/api/main.go                 # 🔄 Vamos atualizar
+│       └── jwt.go                    # ✅ Já existe
+└── cmd/api/main.go                   # 🔄 Vamos atualizar
+
 ```
 
-## ✅ TESTAR OS ENDPOINTS DE DOCUMENTOS.
+## ✅ TESTAR OS ENDPOINTS DE PRESCRIÇÕES.
 
-1. Fazer login (obter token)
-``` bash
-curl -X POST http://localhost:8080/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@cannacare.com","password":"admin123"}'
-```
-Resposta:
+1. Como não foi criado um produto ainda(Etapa 9), vamos criar um diretamento no banco.
 ```bash
-{
-  "success": true,
-  "data": {
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODE1NTIyLCJuYmYiOjE3ODQ3MjkxMjIsImlhdCI6MTc4NDcyOTEyMn0.vKoeW_ldIaciy3bC_8gRjR6vBgEaUwim1MxAxZqdtQY",
-    "token_type": "Bearer",
-    "expires_in": 86400,
-    "user": {
-      "id": "2936db3e-caa3-4b34-999b-15b434ca3315",
-      "name": "Administrador",
-      "email": "admin@cannacare.com",
-      "role": "admin",
-      "is_active": true,
-      "last_login_at": "2026-07-22T11:05:22.713813338-03:00",
-      "created_at": "2026-07-21T13:25:18.668715-03:00"
-    }
-  }
-}
-```
-## 2. Upload de documento (RG/CPF).
+# Conectar ao banco
+docker exec -it cannacare_postgres psql -U postgres -d cannacare_db
+
+# Inserir um produto
+INSERT INTO products (id, name, description, unit_price, min_stock_alert, is_active, created_at, updated_at)
+VALUES (
+    gen_random_uuid(),
+    'Óleo CBD Full Spectrum 10% - 30ml',
+    'Óleo com 10% de CBD, 30ml, uso sublingual',
+    150.00,
+    10,
+    true,
+    NOW(),
+    NOW()
+);
+
+``` 
+## 📝 PASSO 2: APROVAR UM PACIENTE.
 ```bash
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODE1NTIyLCJuYmYiOjE3ODQ3MjkxMjIsImlhdCI6MTc4NDcyOTEyMn0.vKoeW_ldIaciy3bC_8gRjR6vBgEaUwim1MxAxZqdtQY"
-PATIENT_ID="2fac4ddc-5c04-4c2b-aa40-151738ee9b94"
 
-curl -X POST "http://localhost:8080/api/patients/$PATIENT_ID/documents" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "document_type=rg_cpf" \
-  -F "file=@/caminho/para/seu/arquivo.pdf"
-
-```
-
-## Resposta.
-![alt text](image-17.png)
-
-![alt text](image-18.png)
-
-## 3. Listar documentos do paciente.
-```bash
-curl -X GET "http://localhost:8080/api/patients/$PATIENT_ID/documents" \
+# 2.1. Listar pacientes para ver os IDs
+curl -X GET "http://localhost:8080/api/patients?page=1&limit=10" \
   -H "Authorization: Bearer $TOKEN"
 ```
-
-## Resposta.
-![alt text](image-19.png)
-
-## 4. Aprovar documento.
 ```bash
-DOCUMENT_ID="id-do-documento"
+# 2.2. Aprovar o paciente (mudar status para "aprovado")
+PATIENT_ID="id-do-paciente-que-voce-criou"
 
-curl -X PATCH "http://localhost:8080/api/documents/$DOCUMENT_ID/status" \
+curl -X PATCH "http://localhost:8080/api/patients/$PATIENT_ID/status" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "aprovado",
-    "reason": "Documento válido e legível"
-  }'
+    "reason": "Paciente aprovado para teste"
+  }
+``` 
+```bash
+# 2.3. Verificar se o paciente foi aprovado
+curl -X GET "http://localhost:8080/api/patients/$PATIENT_ID" \
+  -H "Authorization: Bearer $TOKEN"
 
 ```
 
-## Resposta.
-![alt text](image-20.png)
+3. Criar uma prescrição
+``` bash
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiMjkzNmRiM2UtY2FhMy00YjM0LTk5OWItMTViNDM0Y2EzMzE1IiwiZW1haWwiOiJhZG1pbkBjYW5uYWNhcmUuY29tIiwicm9sZSI6ImFkbWluIiwiZXhwIjoxNzg0ODE5NDMyLCJuYmYiOjE3ODQ3MzMwMzIsImlhdCI6MTc4NDczMzAzMn0.A0ji8a55DnaIEmkd9vXYcf7wOHNfdq1-HptXRacW2Yo"
 
-![alt text](image-21.png)
-
-
-## 5. Baixar documento.
-```bash
-curl -X GET "http://localhost:8080/api/documents/$DOCUMENT_ID/download" \
+curl -X POST http://localhost:8080/api/prescriptions \
   -H "Authorization: Bearer $TOKEN" \
-  --output documento.pdf
-``` 
-## Resposta - Após rodado o comando será baixado o documento com o nomo document.pdf para dentro da pasta raiz do projeto.
-![alt text](image-22.png)
+  -H "Content-Type: application/json" \
+  -d '{
+    "patient_id": "0f40331c-ca06-43bb-8618-06d64ee58e7b",
+    "doctor_id": "fe063e1a-e653-437d-81cd-223d14c1eafe",
+    "cid": "G40.0",
+    "issue_date": "2026-01-01T00:00:00Z",
+    "expiration_date": "2027-01-01T00:00:00Z",
+    "items": [
+      {
+        "product_id": "ae13d4b8-35e9-4d0f-9aa9-d4679c5b4c56",
+        "dosage_instructions": "5 gotas a cada 12 horas, sublingual",
+        "quantity_recommended": 2
+      }
+    ]
+  }'
+```
+
+## 2. Listar prescrições.
+
+``` bash
+curl -X GET "http://localhost:8080/api/prescriptions?page=1&limit=10" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+
+## 3. Validar prescrição.
+
+``` bash
+PRESCRIPTION_ID="2517459c-8d34-41ea-9319-d0bcd9136f05"
+
+curl -X GET "http://localhost:8080/api/prescriptions/validate/$PRESCRIPTION_ID" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+## 4. Buscar prescrições vencidas.
+
+``` bash
+curl -X GET "http://localhost:8080/api/prescriptions/expired" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+
+## 5. Atualizar status em lote.
+
+``` bash
+curl -X POST "http://localhost:8080/api/prescriptions/update-status" \
+  -H "Authorization: Bearer $TOKEN"
+```
