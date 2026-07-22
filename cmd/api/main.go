@@ -113,6 +113,27 @@ func main() {
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
 		})
 
+		// Inicializar Product Service
+		// --- Rotas de produtos ----
+		productService := services.NewProductService(database.DB)
+
+		// Inicializar Product Handler
+		productHandler := handlers.NewProductHandler(productService)
+
+		// Adicionar as rotas de produtos no grupo protegido:
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
+
+			// Rotas de Produtos
+			r.Post("/api/products", productHandler.Create)
+			r.Get("/api/products", productHandler.List)
+			r.Get("/api/products/low-stock", productHandler.GetLowStock)
+			r.Get("/api/products/stock-summary", productHandler.GetStockSummary)
+			r.Get("/api/products/{id}", productHandler.GetByID)
+			r.Put("/api/products/{id}", productHandler.Update)
+			r.Delete("/api/products/{id}", productHandler.Delete)
+		})
+
 		// Inicializar Anamnese Service
 		// ----Rotas anamenese -----
 		anamneseService := services.NewAnamneseService(database.DB)
