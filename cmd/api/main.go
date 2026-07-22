@@ -113,6 +113,28 @@ func main() {
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
 		})
 
+		// Inicializar Stock Service
+		// --- Rotas estoque ----
+		stockService := services.NewStockService(database.DB)
+
+		// Inicializar Stock Handler
+		stockHandler := handlers.NewStockHandler(stockService)
+
+		// Adicionar as rotas de estoque no grupo protegido:
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
+
+			// Rotas de Estoque
+			r.Post("/api/stock/lots", stockHandler.CreateLot)
+			r.Get("/api/stock/lots", stockHandler.ListLots)
+			r.Get("/api/stock/lots/{id}", stockHandler.GetLotByID)
+			r.Post("/api/stock/adjust", stockHandler.AdjustStock)
+			r.Get("/api/stock/movements", stockHandler.GetMovements)
+			r.Get("/api/stock/expiring", stockHandler.GetExpiringLots)
+			r.Get("/api/stock/low-stock", stockHandler.GetLowStock)
+			r.Get("/api/stock/summary", stockHandler.GetStockSummary)
+		})
+
 		// Inicializar Product Service
 		// --- Rotas de produtos ----
 		productService := services.NewProductService(database.DB)
