@@ -5,20 +5,20 @@
 | Etapa | Módulo | Duração Estimada | Status |
 | :---: | :--- | :---: | :---: |
 | 1 | Configuração Inicial (Banco + GORM) | 1 dia | ✅ Concluído |
-| 2 | Models + Migrations (Todas as tabelas) | 2 dias | ⏳ Próximo |
-| 3 | Autenticação (JWT + Login/Register) | 2 dias | ⏳ |
-| 4 | CRUD de Médicos | 1 dia | ⏳ |
-| 5 | CRUD de Pacientes | 2 dias | ⏳ |
-| 6 | Upload de Documentos | 2 dias | ⏳ |
-| 7 | Gestão de Receitas/Prescrições | 2 dias | ⏳ |
-| 8 | Sistema de Acolhimento (Anamnese) | 2 dias | ⏳ |
-| 9 | CRUD de Produtos | 1 dia | ⏳ |
-| 10 | Controle de Estoque (Lotes + Movimentações) | 2 dias | ⏳ |
-| 11 | Sistema de Pedidos (com baixa de estoque) | 2 dias | ⏳ |
-| 12 | Financeiro (Anuidades + Pagamentos) | 2 dias | ⏳ |
-| 13 | Dashboard + Relatórios (Views) | 2 dias | ⏳ |
-| 14 | Middleware (Roles + Permissões) | 1 dia | ⏳ |
-| 15 | Testes + Documentação Final | 2 dias | ⏳ |
+| 2 | Models + Migrations (Todas as tabelas) | 2 dias | ✅ Concluído |
+| 3 | Autenticação (JWT + Login/Register) | 2 dias | ✅ Concluído |
+| 4 | CRUD de Médicos | 1 dia | ✅ Concluído |
+| 5 | CRUD de Pacientes | 2 dias | ✅ Concluído |
+| 6 | Upload de Documentos | 2 dias | ✅ Concluído |
+| 7 | Gestão de Receitas/Prescrições | 2 dias | ✅ Concluído |
+| 8 | Sistema de Acolhimento (Anamnese) | 2 dias | ✅ Concluído |
+| 9 | CRUD de Produtos | 1 dia | ✅ Concluído |
+| 10 | Controle de Estoque (Lotes + Movimentações) | 2 dias | ✅ Concluído |
+| 11 | Sistema de Pedidos (com baixa de estoque) | 2 dias | ✅ Concluído |
+| 12 | Financeiro (Anuidades + Pagamentos) | 2 dias | ✅ Concluído |
+| 13 | Dashboard + Relatórios (Views) | 2 dias | ✅ Concluído |
+| 14 | Middleware (Roles + Permissões) | 1 dia | ✅ Concluído |
+| 15 | Testes + Documentação Final | 2 dias | ✅ Concluído |
 
 
  ## 📝 O QUE CADA ETAPA VAI ENTREGAR:
