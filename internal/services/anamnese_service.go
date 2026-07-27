@@ -191,7 +191,16 @@ func (s *AnamneseService) Create(patientID uuid.UUID, userID uuid.UUID, req Crea
 		return nil, err
 	}
 
-	return s.toAnamneseResponse(anamnese), nil
+	// ============================================================
+	// 🔧 CORREÇÃO: Recarregar a anamnese com os relacionamentos
+	// ============================================================
+	var createdAnamnese models.Anamnese
+	if err := s.db.Preload("Patient").Preload("ResponsibleUser").
+		Where("id = ?", anamnese.ID).First(&createdAnamnese).Error; err != nil {
+		return nil, err
+	}
+
+	return s.toAnamneseResponse(&createdAnamnese), nil
 }
 
 // ================================================================
@@ -375,13 +384,16 @@ func (s *AnamneseService) Delete(id uuid.UUID) error {
 
 // toAnamneseResponse - Converte models.Anamnese para AnamneseResponse
 func (s *AnamneseService) toAnamneseResponse(a *models.Anamnese) *AnamneseResponse {
+	// ============================================================
+	// 🔧 CORREÇÃO: Verificar se os relacionamentos existem
+	// ============================================================
 	patientName := ""
-	if a.Patient.ID != uuid.Nil {
+	if a.Patient != nil && a.Patient.ID != uuid.Nil {
 		patientName = a.Patient.FullName
 	}
 
 	responsibleUserName := ""
-	if a.ResponsibleUser.ID != uuid.Nil {
+	if a.ResponsibleUser != nil && a.ResponsibleUser.ID != uuid.Nil {
 		responsibleUserName = a.ResponsibleUser.Name
 	}
 

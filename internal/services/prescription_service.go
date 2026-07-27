@@ -191,24 +191,33 @@ func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*Prescripti
 		status = "proxima_vencer"
 	}
 
-	// --- 6. Criar a prescrição ---
-	prescription := &models.Prescription{
-		PatientID:      patientID,
-		DoctorID:       doctorID,
-		CID:            req.CID,
-		IssueDate:      req.IssueDate,
-		ExpirationDate: req.ExpirationDate,
-		Status:         status,
-		IsActive:       true,
-		Items:          items,
-	}
+	    // --- 6. Criar a prescrição ---
+    prescription := &models.Prescription{
+        PatientID:      patientID,
+        DoctorID:       doctorID,
+        CID:            req.CID,
+        IssueDate:      req.IssueDate,
+        ExpirationDate: req.ExpirationDate,
+        Status:         status,
+        IsActive:       true,
+        Items:          items,
+    }
 
-	if err := s.db.Create(prescription).Error; err != nil {
-		return nil, err
-	}
+    if err := s.db.Create(prescription).Error; err != nil {
+        return nil, err
+    }
 
-	// --- 7. Retornar resposta ---
-	return s.toPrescriptionResponse(prescription), nil
+    // ============================================================
+    // 🔧 CORREÇÃO: Recarregar a prescrição com os relacionamentos
+    // ============================================================
+    var createdPrescription models.Prescription
+    if err := s.db.Preload("Items").Preload("Items.Product").Preload("Patient").Preload("Doctor").
+        Where("id = ?", prescription.ID).First(&createdPrescription).Error; err != nil {
+        return nil, err
+    }
+
+    // --- 7. Retornar resposta ---
+    return s.toPrescriptionResponse(&createdPrescription), nil
 }
 
 // ================================================================
@@ -475,51 +484,56 @@ func (s *PrescriptionService) updateStatus(p *models.Prescription) {
 }
 
 // toPrescriptionResponse - Converte models.Prescription para PrescriptionResponse
+// FUNÇÃO toPrescriptionResponse()
 func (s *PrescriptionService) toPrescriptionResponse(p *models.Prescription) *PrescriptionResponse {
-	// Calcular dias até vencer
-	daysUntilExpire := int(p.ExpirationDate.Sub(time.Now()).Hours() / 24)
-	if daysUntilExpire < 0 {
-		daysUntilExpire = 0
-	}
+    // Calcular dias até vencer
+    daysUntilExpire := int(p.ExpirationDate.Sub(time.Now()).Hours() / 24)
+    if daysUntilExpire < 0 {
+        daysUntilExpire = 0
+    }
 
-	items := []PrescriptionItemResponse{}
-	for _, item := range p.Items {
-		productName := ""
-		if item.Product.ID != uuid.Nil {
-			productName = item.Product.Name
-		}
-		items = append(items, PrescriptionItemResponse{
-			ID:                  item.ID.String(),
-			ProductID:           item.ProductID.String(),
-			ProductName:         productName,
-			DosageInstructions:  item.DosageInstructions,
-			QuantityRecommended: item.QuantityRecommended,
-		})
-	}
+    items := []PrescriptionItemResponse{}
+    for _, item := range p.Items {
+        productName := ""
+        // 🔧 Verificar se Product não é nil
+        if item.Product.ID != uuid.Nil {
+            productName = item.Product.Name
+        }
+        items = append(items, PrescriptionItemResponse{
+            ID:                  item.ID.String(),
+            ProductID:           item.ProductID.String(),
+            ProductName:         productName,
+            DosageInstructions:  item.DosageInstructions,
+            QuantityRecommended: item.QuantityRecommended,
+        })
+    }
 
-	patientName := ""
-	if p.Patient.ID != uuid.Nil {
-		patientName = p.Patient.FullName
-	}
-	doctorName := ""
-	if p.Doctor.ID != uuid.Nil {
-		doctorName = p.Doctor.Name
-	}
+    patientName := ""
+    // 🔧 Verificar se Patient não é nil
+    if p.Patient.ID != uuid.Nil {
+        patientName = p.Patient.FullName
+    }
 
-	return &PrescriptionResponse{
-		ID:              p.ID.String(),
-		PatientID:       p.PatientID.String(),
-		PatientName:     patientName,
-		DoctorID:        p.DoctorID.String(),
-		DoctorName:      doctorName,
-		CID:             p.CID,
-		IssueDate:       p.IssueDate.Format("2006-01-02"),
-		ExpirationDate:  p.ExpirationDate.Format("2006-01-02"),
-		Status:          p.Status,
-		IsActive:        p.IsActive,
-		Items:           items,
-		DaysUntilExpire: daysUntilExpire,
-		CreatedAt:       p.CreatedAt.Format("2006-01-02 15:04:05"),
-		UpdatedAt:       p.UpdatedAt.Format("2006-01-02 15:04:05"),
-	}
+    doctorName := ""
+    // 🔧 Verificar se Doctor não é nil
+    if p.Doctor.ID != uuid.Nil {
+        doctorName = p.Doctor.Name
+    }
+
+    return &PrescriptionResponse{
+        ID:              p.ID.String(),
+        PatientID:       p.PatientID.String(),
+        PatientName:     patientName,
+        DoctorID:        p.DoctorID.String(),
+        DoctorName:      doctorName,
+        CID:             p.CID,
+        IssueDate:       p.IssueDate.Format("2006-01-02"),
+        ExpirationDate:  p.ExpirationDate.Format("2006-01-02"),
+        Status:          p.Status,
+        IsActive:        p.IsActive,
+        Items:           items,
+        DaysUntilExpire: daysUntilExpire,
+        CreatedAt:       p.CreatedAt.Format("2006-01-02 15:04:05"),
+        UpdatedAt:       p.UpdatedAt.Format("2006-01-02 15:04:05"),
+    }
 }
