@@ -89,7 +89,13 @@ func main() {
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
-
+	// ============================================================
+	// 🆕 SERVER ARQUIVOS ESTÁTICOS (UPLOADS)
+	// ============================================================
+	// Isso permite que os arquivos sejam acessados via URL
+	// Exemplo: http://localhost:8080/uploads/receitas/arquivo.pdf
+	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
+	
 	// ============================================================
 	// ROTAS PÚBLICAS
 	// ============================================================

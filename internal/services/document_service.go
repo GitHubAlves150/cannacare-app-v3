@@ -53,8 +53,8 @@ type DocumentService struct {
 func NewDocumentService(db *gorm.DB) *DocumentService {
 	return &DocumentService{
 		db:          db,
-		uploadPath:  "uploads/documents",
-		maxFileSize: 10 * 1024 * 1024, // 10 MB
+		uploadPath:  "uploads/receitas", // ← MUDAR PARA RECEITAS
+		maxFileSize: 10 * 1024 * 1024,
 		allowedTypes: []string{
 			"application/pdf",
 			"image/jpeg",
@@ -138,16 +138,16 @@ func (s *DocumentService) Upload(patientID uuid.UUID, documentType string, file 
 		return nil, err
 	}
 
-	// --- 5. Gerar nome único para o arquivo ---
+	// Gerar nome único para o arquivo
 	extension := filepath.Ext(fileHeader.Filename)
 	if extension == "" {
-		// Se não tiver extensão, usa a extensão do MIME type
 		ext := getExtensionFromMime(mimeType)
 		extension = "." + ext
 	}
-	filename := fmt.Sprintf("%s_%s_%d%s",
-		patientID.String(),
-		documentType,
+
+	// Nome: receita_[patient_id]_[timestamp].[ext]
+	filename := fmt.Sprintf("receita_%s_%d%s",
+		patientID.String()[:8], // Primeiros 8 caracteres do UUID
 		time.Now().Unix(),
 		extension,
 	)
