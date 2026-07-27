@@ -8,6 +8,7 @@ import (
 	"cannacare-backend/internal/database"
 	"cannacare-backend/internal/handlers"
 	"cannacare-backend/internal/middleware"
+	"cannacare-backend/internal/models"
 	"cannacare-backend/internal/services"
 	"cannacare-backend/internal/utils"
 	"cannacare-backend/pkg/jwt"
@@ -95,7 +96,7 @@ func main() {
 	// Isso permite que os arquivos sejam acessados via URL
 	// Exemplo: http://localhost:8080/uploads/receitas/arquivo.pdf
 	r.Handle("/uploads/*", http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
-	
+
 	// ============================================================
 	// ROTAS PÚBLICAS
 	// ============================================================
@@ -121,6 +122,27 @@ func main() {
 			})
 		})
 
+		// --- Perfil do Usuário ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.AuthMiddleware(jwtService))
+			r.Get("/api/users/me", func(w http.ResponseWriter, r *http.Request) {
+				userID := r.Context().Value(middleware.UserIDKey).(string)
+				// Buscar usuário no banco
+				var user models.User
+				if err := database.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+					utils.SendError(w, http.StatusNotFound, "Usuário não encontrado")
+					return
+				}
+				utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
+					"id":         user.ID,
+					"name":       user.Name,
+					"email":      user.Email,
+					"role":       user.Role,
+					"is_active":  user.IsActive,
+					"created_at": user.CreatedAt,
+				})
+			})
+		})
 		// --- Médicos (admin, secretaria, coordenacao) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
