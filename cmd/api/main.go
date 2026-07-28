@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
@@ -140,6 +142,143 @@ func main() {
 					"role":       user.Role,
 					"is_active":  user.IsActive,
 					"created_at": user.CreatedAt,
+				})
+			})
+		})
+
+		// --- Admin - Gerenciamento de Usuários ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin"))
+
+			// Listar todos os usuários
+			r.Get("/api/admin/users", func(w http.ResponseWriter, r *http.Request) {
+				var users []models.User
+				if err := database.DB.Find(&users).Error; err != nil {
+					utils.SendError(w, http.StatusInternalServerError, "Erro ao buscar usuários")
+					return
+				}
+				utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
+					"items": users,
+					"total": len(users),
+				})
+			})
+
+			// Atualizar role do usuário
+			r.Patch("/api/admin/users/{id}/role", func(w http.ResponseWriter, r *http.Request) {
+				userID := chi.URLParam(r, "id")
+				var req struct {
+					Role string `json:"role"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					utils.SendError(w, http.StatusBadRequest, "corpo inválido")
+					return
+				}
+
+				if err := database.DB.Model(&models.User{}).Where("id = ?", userID).Update("role", req.Role).Error; err != nil {
+					utils.SendError(w, http.StatusInternalServerError, "Erro ao atualizar role")
+					return
+				}
+				utils.SendSuccess(w, http.StatusOK, map[string]string{"message": "Role atualizada com sucesso"})
+			})
+
+			// Ativar/Desativar usuário
+			r.Patch("/api/admin/users/{id}/status", func(w http.ResponseWriter, r *http.Request) {
+				userID := chi.URLParam(r, "id")
+				var user models.User
+				if err := database.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+					utils.SendError(w, http.StatusNotFound, "Usuário não encontrado")
+					return
+				}
+				newStatus := !user.IsActive
+				if err := database.DB.Model(&models.User{}).Where("id = ?", userID).Update("is_active", newStatus).Error; err != nil {
+					utils.SendError(w, http.StatusInternalServerError, "Erro ao atualizar status")
+					return
+				}
+				utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
+					"message":   "Status atualizado com sucesso",
+					"is_active": newStatus,
+				})
+			})
+		})
+		// --- Perfil do Usuário ---
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.AuthMiddleware(jwtService))
+
+			// Buscar perfil do usuário
+			r.Get("/api/users/me", func(w http.ResponseWriter, r *http.Request) {
+				userID := r.Context().Value(middleware.UserIDKey).(string)
+
+				var user models.User
+				if err := database.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+					utils.SendError(w, http.StatusNotFound, "Usuário não encontrado")
+					return
+				}
+
+				utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
+					"id":         user.ID,
+					"name":       user.Name,
+					"email":      user.Email,
+					"role":       user.Role,
+					"is_active":  user.IsActive,
+					"created_at": user.CreatedAt,
+				})
+			})
+
+			// ============================================================
+			// 🆕 ALTERAR SENHA
+			// ============================================================
+			r.Put("/api/users/me/password", func(w http.ResponseWriter, r *http.Request) {
+				userID := r.Context().Value(middleware.UserIDKey).(string)
+
+				// Decodificar requisição
+				var req struct {
+					CurrentPassword string `json:"current_password"`
+					NewPassword     string `json:"new_password"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
+					return
+				}
+
+				// Validar campos
+				if req.CurrentPassword == "" || req.NewPassword == "" {
+					utils.SendError(w, http.StatusBadRequest, "senha atual e nova senha são obrigatórias")
+					return
+				}
+
+				if len(req.NewPassword) < 6 {
+					utils.SendError(w, http.StatusBadRequest, "nova senha deve ter pelo menos 6 caracteres")
+					return
+				}
+
+				// Buscar usuário
+				var user models.User
+				if err := database.DB.Where("id = ?", userID).First(&user).Error; err != nil {
+					utils.SendError(w, http.StatusNotFound, "Usuário não encontrado")
+					return
+				}
+
+				// Verificar senha atual
+				if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+					utils.SendError(w, http.StatusUnauthorized, "senha atual incorreta")
+					return
+				}
+
+				// Criptografar nova senha
+				hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+				if err != nil {
+					utils.SendError(w, http.StatusInternalServerError, "erro ao criptografar senha")
+					return
+				}
+
+				// Atualizar senha
+				if err := database.DB.Model(&models.User{}).Where("id = ?", userID).Update("password_hash", string(hashedPassword)).Error; err != nil {
+					utils.SendError(w, http.StatusInternalServerError, "erro ao atualizar senha")
+					return
+				}
+
+				utils.SendSuccess(w, http.StatusOK, map[string]string{
+					"message": "Senha alterada com sucesso",
 				})
 			})
 		})

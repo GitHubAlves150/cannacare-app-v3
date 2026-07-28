@@ -8,7 +8,7 @@
 // 2. Validação de dados (CPF, email, telefone, data de nascimento)
 // 3. Busca com filtros (nome, CPF, status, etc)
 // 4. Controle de status do paciente
-// 5. Associação com usuário (User) para acesso ao portal
+// 5. ✅ CORRIGIDO: Pacientes NÃO têm usuário no sistema
 // 6. Paciente social (isenção de anuidade)
 // ================================================================
 
@@ -24,7 +24,6 @@ import (
 	"cannacare-backend/internal/utils"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -38,7 +37,6 @@ type PatientService struct {
 // ================================================================
 // FUNÇÃO NEWPATIENTSERVICE()
 // ================================================================
-// Cria uma nova instância do serviço de pacientes
 func NewPatientService(db *gorm.DB) *PatientService {
 	return &PatientService{
 		db: db,
@@ -49,7 +47,6 @@ func NewPatientService(db *gorm.DB) *PatientService {
 // STRUCTS PARA REQUISIÇÕES E RESPOSTAS
 // ================================================================
 
-// CreatePatientRequest - Dados para criar um novo paciente
 type CreatePatientRequest struct {
 	FullName            string    `json:"full_name" validate:"required,min=3,max=200"`
 	BirthDate           time.Time `json:"birth_date" validate:"required"`
@@ -70,7 +67,6 @@ type CreatePatientRequest struct {
 	IsSocialPatient     bool      `json:"is_social_patient"`
 }
 
-// UpdatePatientRequest - Dados para atualizar um paciente
 type UpdatePatientRequest struct {
 	FullName            string    `json:"full_name" validate:"omitempty,min=3,max=200"`
 	BirthDate           time.Time `json:"birth_date" validate:"omitempty"`
@@ -88,7 +84,6 @@ type UpdatePatientRequest struct {
 	IsSocialPatient     *bool     `json:"is_social_patient" validate:"omitempty"`
 }
 
-// PatientResponse - Resposta com dados do paciente (formato padronizado)
 type PatientResponse struct {
 	ID                   string     `json:"id"`
 	UserID               *string    `json:"user_id,omitempty"`
@@ -115,7 +110,6 @@ type PatientResponse struct {
 	UpdatedAt            string     `json:"updated_at"`
 }
 
-// ListPatientRequest - Filtros para listagem de pacientes
 type ListPatientRequest struct {
 	Name     string `json:"name" query:"name"`
 	CPF      string `json:"cpf" query:"cpf"`
@@ -126,7 +120,6 @@ type ListPatientRequest struct {
 	Limit    int    `json:"limit" query:"limit"`
 }
 
-// UpdateStatusRequest - Para mudar status do paciente
 type UpdateStatusRequest struct {
 	Status string `json:"status" validate:"required,oneof=pendente_documentacao em_analise aprovado negado assistente_social"`
 	Reason string `json:"reason" validate:"omitempty"`
@@ -135,22 +128,6 @@ type UpdateStatusRequest struct {
 // ================================================================
 // FUNÇÃO CREATE()
 // ================================================================
-// Cria um novo paciente no sistema
-//
-// VALIDAÇÕES:
-// 1. CPF único
-// 2. Email único (se informado)
-// 3. Data de nascimento válida (maior de 18 anos)
-// 4. Telefone válido
-// 5. UF válida
-//
-// FLUXO:
-// 1. Validar dados
-// 2. Verificar CPF duplicado
-// 3. Verificar email duplicado
-// 4. Criar usuário (User) para acesso ao portal
-// 5. Criar paciente com vínculo ao usuário
-// 6. Retornar resposta
 func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, error) {
 	// --- 1. Validar dados ---
 	if err := validatePatientData(req); err != nil {
@@ -176,11 +153,17 @@ func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, err
 		}
 	}
 
-	// --- 4. Criar usuário para acesso ao portal ---
-	userID, err := s.createUserForPatient(req.FullName, req.Email)
-	if err != nil {
-		return nil, err
-	}
+	// ============================================================
+	// 🔧 CORREÇÃO: Pacientes NÃO têm usuário no sistema
+	// ============================================================
+	// Removida a criação de usuário para pacientes.
+	// Pacientes são apenas pessoas assistidas, não usuários do sistema.
+	// ============================================================
+	// userID, err := s.createUserForPatient(req.FullName, req.Email)
+	// if err != nil {
+	//     return nil, err
+	// }
+	// ============================================================
 
 	// --- 5. Definir status padrão ---
 	status := req.Status
@@ -188,9 +171,9 @@ func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, err
 		status = "pendente_documentacao"
 	}
 
-	// --- 6. Criar o paciente ---
+	// --- 6. Criar o paciente (sem vínculo com usuário) ---
 	patient := &models.Patient{
-		UserID:              userID,
+		UserID:              nil, // 🔧 SEMPRE nil (paciente não tem login)
 		FullName:            req.FullName,
 		BirthDate:           req.BirthDate,
 		Gender:              req.Gender,
@@ -220,7 +203,6 @@ func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, err
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-// Busca um paciente pelo ID
 func (s *PatientService) GetByID(id uuid.UUID) (*PatientResponse, error) {
 	var patient models.Patient
 	if err := s.db.Where("id = ?", id).First(&patient).Error; err != nil {
@@ -235,9 +217,7 @@ func (s *PatientService) GetByID(id uuid.UUID) (*PatientResponse, error) {
 // ================================================================
 // FUNÇÃO LIST()
 // ================================================================
-// Lista pacientes com filtros e paginação
 func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64, error) {
-	// --- 1. Definir valores padrão para paginação ---
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -246,7 +226,6 @@ func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64,
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir a query ---
 	query := s.db.Model(&models.Patient{})
 
 	if req.Name != "" {
@@ -265,19 +244,16 @@ func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64,
 		query = query.Where("is_social_patient = ?", *req.IsSocial)
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var patients []models.Patient
 	if err := query.Offset(offset).Limit(req.Limit).Order("full_name ASC").Find(&patients).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []PatientResponse
 	for _, patient := range patients {
 		responses = append(responses, *toPatientResponse(&patient))
@@ -289,9 +265,7 @@ func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64,
 // ================================================================
 // FUNÇÃO UPDATE()
 // ================================================================
-// Atualiza os dados de um paciente
 func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*PatientResponse, error) {
-	// --- 1. Buscar paciente ---
 	var patient models.Patient
 	if err := s.db.Where("id = ?", id).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -300,7 +274,6 @@ func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*Patien
 		return nil, err
 	}
 
-	// --- 2. Atualizar campos ---
 	if req.FullName != "" {
 		patient.FullName = req.FullName
 	}
@@ -347,7 +320,6 @@ func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*Patien
 		patient.IsSocialPatient = *req.IsSocialPatient
 	}
 
-	// --- 3. Salvar ---
 	if err := s.db.Save(&patient).Error; err != nil {
 		return nil, err
 	}
@@ -358,7 +330,6 @@ func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*Patien
 // ================================================================
 // FUNÇÃO DELETE()
 // ================================================================
-// Remove um paciente (soft delete)
 func (s *PatientService) Delete(id uuid.UUID) error {
 	result := s.db.Delete(&models.Patient{}, "id = ?", id)
 	if result.Error != nil {
@@ -373,9 +344,7 @@ func (s *PatientService) Delete(id uuid.UUID) error {
 // ================================================================
 // FUNÇÃO UPDATESTATUS()
 // ================================================================
-// Atualiza o status de um paciente e registra no histórico
 func (s *PatientService) UpdateStatus(id uuid.UUID, req UpdateStatusRequest, userID uuid.UUID) (*PatientResponse, error) {
-	// --- 1. Buscar paciente ---
 	var patient models.Patient
 	if err := s.db.Where("id = ?", id).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
@@ -384,12 +353,10 @@ func (s *PatientService) UpdateStatus(id uuid.UUID, req UpdateStatusRequest, use
 		return nil, err
 	}
 
-	// --- 2. Verificar se o status é diferente do atual ---
 	if patient.Status == req.Status {
 		return nil, errors.New("paciente já está com este status")
 	}
 
-	// --- 3. Registrar histórico de status ---
 	history := &models.PatientStatusHistory{
 		PatientID: patient.ID,
 		ChangedBy: &userID,
@@ -402,10 +369,8 @@ func (s *PatientService) UpdateStatus(id uuid.UUID, req UpdateStatusRequest, use
 		return nil, err
 	}
 
-	// --- 4. Atualizar status do paciente ---
 	patient.Status = req.Status
 
-	// Se for aprovado, registrar data de aprovação
 	if req.Status == "aprovado" {
 		now := time.Now()
 		patient.ApprovedAt = &now
@@ -421,7 +386,6 @@ func (s *PatientService) UpdateStatus(id uuid.UUID, req UpdateStatusRequest, use
 // ================================================================
 // FUNÇÃO GETSTATISTICS()
 // ================================================================
-// Retorna estatísticas dos pacientes (dashboard)
 func (s *PatientService) GetStatistics() (map[string]interface{}, error) {
 	var stats map[string]interface{}
 
@@ -437,48 +401,17 @@ func (s *PatientService) GetStatistics() (map[string]interface{}, error) {
 // FUNÇÕES AUXILIARES
 // ================================================================
 
-// createUserForPatient - Cria um usuário para o paciente acessar o portal
-func (s *PatientService) createUserForPatient(name, email string) (*uuid.UUID, error) {
-	// Se não tiver email, não cria usuário
-	if email == "" {
-		return nil, nil
-	}
+// ================================================================
+// 🔧 FUNÇÃO DESATIVADA: Pacientes NÃO têm usuário
+// ================================================================
+// createUserForPatient - DESATIVADO - Pacientes não têm login
+// ================================================================
+// func (s *PatientService) createUserForPatient(name, email string) (*uuid.UUID, error) {
+//     return nil, nil
+// }
 
-	// Verificar se o email já existe
-	var existingUser models.User
-	err := s.db.Where("email = ?", email).First(&existingUser).Error
-	if err == nil {
-		return nil, fmt.Errorf("email %s já está em uso", email)
-	} else if err != gorm.ErrRecordNotFound {
-		return nil, err
-	}
-
-	// Gerar senha aleatória temporária (será trocada pelo paciente)
-	tempPassword := generateTempPassword()
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(tempPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
-
-	// Criar usuário
-	user := &models.User{
-		Name:         name,
-		Email:        email,
-		PasswordHash: string(hashedPassword),
-		Role:         "paciente",
-		IsActive:     true,
-	}
-
-	if err := s.db.Create(user).Error; err != nil {
-		return nil, err
-	}
-
-	return &user.ID, nil
-}
-
-// generateTempPassword - Gera uma senha temporária aleatória
+// generateTempPassword - Mantido para compatibilidade (não usado)
 func generateTempPassword() string {
-	// Senha temporária simples (será trocada pelo paciente)
 	return "temp123456"
 }
 
@@ -519,7 +452,6 @@ func toPatientResponse(patient *models.Patient) *PatientResponse {
 
 // validatePatientData - Valida os dados do paciente
 func validatePatientData(req CreatePatientRequest) error {
-	// Validar nome
 	if len(req.FullName) < 3 {
 		return errors.New("nome deve ter pelo menos 3 caracteres")
 	}
@@ -527,7 +459,6 @@ func validatePatientData(req CreatePatientRequest) error {
 		return errors.New("nome deve ter no máximo 200 caracteres")
 	}
 
-	// Validar CPF (11 dígitos)
 	req.CPF = strings.ReplaceAll(req.CPF, ".", "")
 	req.CPF = strings.ReplaceAll(req.CPF, "-", "")
 	if len(req.CPF) != 11 {
@@ -537,7 +468,6 @@ func validatePatientData(req CreatePatientRequest) error {
 		return errors.New("CPF inválido")
 	}
 
-	// Validar data de nascimento (maior de 18 anos)
 	if req.BirthDate.After(time.Now()) {
 		return errors.New("data de nascimento não pode ser futura")
 	}
@@ -549,22 +479,18 @@ func validatePatientData(req CreatePatientRequest) error {
 		return errors.New("data de nascimento inválida")
 	}
 
-	// Validar email (se informado)
 	if req.Email != "" && !utils.IsValidEmail(req.Email) {
 		return errors.New("email inválido")
 	}
 
-	// Validar telefone (se informado)
 	if req.Phone != "" && !utils.IsValidPhone(req.Phone) {
 		return errors.New("telefone inválido")
 	}
 
-	// Validar WhatsApp (se informado)
 	if req.WhatsApp != "" && !utils.IsValidPhone(req.WhatsApp) {
 		return errors.New("whatsapp inválido")
 	}
 
-	// Validar estado (se informado)
 	if req.AddressState != "" {
 		if !utils.IsValidState(req.AddressState) {
 			return errors.New("UF inválida")

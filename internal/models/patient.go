@@ -38,8 +38,8 @@ type Patient struct {
 
 	// === RELACIONAMENTO COM USUÁRIO ===
 	// UserID - Chave estrangeira para users (pode ser NULL se não tiver acesso ao portal)
-	// Unique: Um usuário só pode estar associado a UM paciente
-	UserID *uuid.UUID `gorm:"type:uuid;unique" json:"user_id,omitempty"`
+	    // 🔧 UserID agora é opcional e pode ser NULL
+    UserID *uuid.UUID `gorm:"type:uuid;index" json:"user_id,omitempty"` // ← Remove "unique"
 
 	// === DADOS PESSOAIS (OBRIGATÓRIOS) ===
 	// FullName - Nome completo do paciente
