@@ -1,5 +1,5 @@
 // ================================================================
-// PACOTE SERVICES - DOCTOR SERVICE
+// PACOTE SERVICES - DOCTOR SERVICE (COM MULTI-TENANCY)
 // ================================================================
 // Camada de serviço responsável pela gestão de médicos.
 // ================================================================
@@ -8,11 +8,10 @@ package services
 
 import (
 	"cannacare-backend/internal/models"
+	"cannacare-backend/internal/utils"
 	"errors"
 	"fmt"
 	"strings"
-
-	"cannacare-backend/internal/utils" // ← ADICIONAR ESTE IMPORT
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -56,16 +55,16 @@ type UpdateDoctorRequest struct {
 }
 
 type DoctorResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	CRM       string `json:"crm"`
-	CRMState  string `json:"crm_state"`
-	Specialty string `json:"specialty,omitempty"`
-	Phone     string `json:"phone,omitempty"`
-	Email     string `json:"email,omitempty"`
-	IsActive  bool   `json:"is_active"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	CRM        string `json:"crm"`
+	CRMState   string `json:"crm_state"`
+	Specialty  string `json:"specialty,omitempty"`
+	Phone      string `json:"phone,omitempty"`
+	Email      string `json:"email,omitempty"`
+	IsActive   bool   `json:"is_active"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 }
 
 type ListDoctorRequest struct {
@@ -78,42 +77,46 @@ type ListDoctorRequest struct {
 }
 
 // ================================================================
-// FUNÇÃO CREATE()
+// FUNÇÃO CREATE() - COM MULTI-TENANCY
 // ================================================================
-func (s *DoctorService) Create(req CreateDoctorRequest) (*DoctorResponse, error) {
+// ⚠️ AGORA RECEBE association_id COMO PRIMEIRO PARÂMETRO!
+// ================================================================
+func (s *DoctorService) Create(associationID uuid.UUID, req CreateDoctorRequest) (*DoctorResponse, error) {
 	// --- 1. Validar dados ---
 	if err := validateDoctorData(req); err != nil {
 		return nil, err
 	}
 
-	// --- 2. Verificar se CRM já existe ---
+	// --- 2. Verificar se CRM já existe DENTRO da associação ---
 	var existingDoctor models.Doctor
-	err := s.db.Where("crm = ? AND crm_state = ?", req.CRM, req.CRMState).First(&existingDoctor).Error
+	err := s.db.Where("crm = ? AND crm_state = ? AND association_id = ?", 
+		req.CRM, strings.ToUpper(req.CRMState), associationID).First(&existingDoctor).Error
 	if err == nil {
-		return nil, fmt.Errorf("médico com CRM %s-%s já cadastrado", req.CRM, req.CRMState)
+		return nil, fmt.Errorf("médico com CRM %s-%s já cadastrado nesta associação", req.CRM, req.CRMState)
 	} else if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
 
-	// --- 3. Verificar se email já existe (se informado) ---
+	// --- 3. Verificar se email já existe DENTRO da associação ---
 	if req.Email != "" {
-		err = s.db.Where("email = ?", req.Email).First(&existingDoctor).Error
+		err = s.db.Where("email = ? AND association_id = ?", req.Email, associationID).First(&existingDoctor).Error
 		if err == nil {
-			return nil, fmt.Errorf("email %s já cadastrado para outro médico", req.Email)
+			return nil, fmt.Errorf("email %s já cadastrado nesta associação", req.Email)
 		} else if err != gorm.ErrRecordNotFound {
 			return nil, err
 		}
 	}
 
-	// --- 4. Criar o médico ---
+	// --- 4. Criar o médico com association_id ---
 	doctor := &models.Doctor{
-		Name:      req.Name,
-		CRM:       req.CRM,
-		CRMState:  strings.ToUpper(req.CRMState),
-		Specialty: req.Specialty,
-		Phone:     req.Phone,
-		Email:     req.Email,
-		IsActive:  true,
+		AssociationID: associationID, // ← ESSENCIAL!
+		Name:          req.Name,
+		CRM:           req.CRM,
+		CRMState:      strings.ToUpper(req.CRMState),
+		Specialty:     req.Specialty,
+		Phone:         req.Phone,
+		Email:         req.Email,
+		IsActive:      true,
 	}
 
 	if err := s.db.Create(doctor).Error; err != nil {
@@ -124,11 +127,14 @@ func (s *DoctorService) Create(req CreateDoctorRequest) (*DoctorResponse, error)
 }
 
 // ================================================================
-// FUNÇÃO GETBYID()
+// FUNÇÃO GETBYID() - COM MULTI-TENANCY
 // ================================================================
-func (s *DoctorService) GetByID(id uuid.UUID) (*DoctorResponse, error) {
+// ⚠️ AGORA RECEBE association_id COMO PRIMEIRO PARÂMETRO!
+// ================================================================
+func (s *DoctorService) GetByID(associationID uuid.UUID, id uuid.UUID) (*DoctorResponse, error) {
 	var doctor models.Doctor
-	if err := s.db.Where("id = ?", id).First(&doctor).Error; err != nil {
+	// ⚠️ SEMPRE filtra por association_id!
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&doctor).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("médico não encontrado")
 		}
@@ -138,9 +144,11 @@ func (s *DoctorService) GetByID(id uuid.UUID) (*DoctorResponse, error) {
 }
 
 // ================================================================
-// FUNÇÃO LIST()
+// FUNÇÃO LIST() - COM MULTI-TENANCY
 // ================================================================
-func (s *DoctorService) List(req ListDoctorRequest) ([]DoctorResponse, int64, error) {
+// ⚠️ AGORA RECEBE association_id COMO PRIMEIRO PARÂMETRO!
+// ================================================================
+func (s *DoctorService) List(associationID uuid.UUID, req ListDoctorRequest) ([]DoctorResponse, int64, error) {
 	// --- 1. Definir valores padrão para paginação ---
 	if req.Page <= 0 {
 		req.Page = 1
@@ -150,10 +158,11 @@ func (s *DoctorService) List(req ListDoctorRequest) ([]DoctorResponse, int64, er
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir a query ---
-	query := s.db.Model(&models.Doctor{})
+	// --- 2. Construir a query SEMPRE com association_id ---
+	// ⚠️ NUNCA remova o filtro de association_id!
+	query := s.db.Model(&models.Doctor{}).Where("association_id = ?", associationID)
 
-	// Aplicar filtros
+	// Aplicar filtros (todos COM association_id)
 	if req.Name != "" {
 		query = query.Where("name ILIKE ?", "%"+req.Name+"%")
 	}
@@ -189,12 +198,14 @@ func (s *DoctorService) List(req ListDoctorRequest) ([]DoctorResponse, int64, er
 }
 
 // ================================================================
-// FUNÇÃO UPDATE()
+// FUNÇÃO UPDATE() - COM MULTI-TENANCY
 // ================================================================
-func (s *DoctorService) Update(id uuid.UUID, req UpdateDoctorRequest) (*DoctorResponse, error) {
-	// --- 1. Buscar o médico ---
+// ⚠️ AGORA RECEBE association_id COMO PRIMEIRO PARÂMETRO!
+// ================================================================
+func (s *DoctorService) Update(associationID uuid.UUID, id uuid.UUID, req UpdateDoctorRequest) (*DoctorResponse, error) {
+	// --- 1. Buscar o médico (SEMPRE com association_id) ---
 	var doctor models.Doctor
-	if err := s.db.Where("id = ?", id).First(&doctor).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&doctor).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("médico não encontrado")
 		}
@@ -230,10 +241,13 @@ func (s *DoctorService) Update(id uuid.UUID, req UpdateDoctorRequest) (*DoctorRe
 }
 
 // ================================================================
-// FUNÇÃO DELETE()
+// FUNÇÃO DELETE() - COM MULTI-TENANCY
 // ================================================================
-func (s *DoctorService) Delete(id uuid.UUID) error {
-	result := s.db.Delete(&models.Doctor{}, "id = ?", id)
+// ⚠️ AGORA RECEBE association_id COMO PRIMEIRO PARÂMETRO!
+// ================================================================
+func (s *DoctorService) Delete(associationID uuid.UUID, id uuid.UUID) error {
+	// ⚠️ SEMPRE filtra por association_id!
+	result := s.db.Where("id = ? AND association_id = ?", id, associationID).Delete(&models.Doctor{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -244,12 +258,15 @@ func (s *DoctorService) Delete(id uuid.UUID) error {
 }
 
 // ================================================================
-// FUNÇÃO GETTOPDOCTORS()
+// FUNÇÃO GETTOPDOCTORS() - COM MULTI-TENANCY
 // ================================================================
-func (s *DoctorService) GetTopDoctors() ([]map[string]interface{}, error) {
+// ⚠️ AGORA RECEBE association_id COMO PRIMEIRO PARÂMETRO!
+// ================================================================
+func (s *DoctorService) GetTopDoctors(associationID uuid.UUID) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
 
-	err := s.db.Table("vw_top_doctors").Find(&results).Error
+	// ⚠️ A view vw_top_doctors já tem association_id
+	err := s.db.Table("vw_top_doctors").Where("association_id = ?", associationID).Find(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -264,16 +281,16 @@ func (s *DoctorService) GetTopDoctors() ([]map[string]interface{}, error) {
 // toDoctorResponse - Converte models.Doctor para DoctorResponse
 func toDoctorResponse(doctor *models.Doctor) *DoctorResponse {
 	return &DoctorResponse{
-		ID:        doctor.ID.String(),
-		Name:      doctor.Name,
-		CRM:       doctor.CRM,
-		CRMState:  doctor.CRMState,
-		Specialty: doctor.Specialty,
-		Phone:     doctor.Phone,
-		Email:     doctor.Email,
-		IsActive:  doctor.IsActive,
-		CreatedAt: doctor.CreatedAt.Format("2006-01-02 15:04:05"),
-		UpdatedAt: doctor.UpdatedAt.Format("2006-01-02 15:04:05"),
+		ID:         doctor.ID.String(),
+		Name:       doctor.Name,
+		CRM:        doctor.CRM,
+		CRMState:   doctor.CRMState,
+		Specialty:  doctor.Specialty,
+		Phone:      doctor.Phone,
+		Email:      doctor.Email,
+		IsActive:   doctor.IsActive,
+		CreatedAt:  doctor.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt:  doctor.UpdatedAt.Format("2006-01-02 15:04:05"),
 	}
 }
 
