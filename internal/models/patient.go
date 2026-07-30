@@ -1,11 +1,12 @@
 // ================================================================
-// MODEL PATIENT
+// CANNACARE - MODEL PATIENT (PACIENTE)
 // ================================================================
-// Representa um paciente/associado da Cannacare
+// Representa um paciente/associado da associação
 //
-// Tabela: patients
+// TABELA: patients
 //
 // RELACIONAMENTOS:
+//   - Cada paciente pertence a UMA associação (association_id)
 //   - Um paciente pode ter um usuário (User) para acesso ao portal
 //   - Um paciente pode ter muitos documentos (PatientDocument)
 //   - Um paciente pode ter muitas receitas (Prescription)
@@ -20,6 +21,11 @@
 //   aprovado             - Paciente aprovado e ativo
 //   negado               - Paciente reprovado
 //   assistente_social    - Em análise social (vulnerabilidade)
+//
+// REGRA DE NEGÓCIO CRÍTICA:
+//   - Pacientes SÓ podem ser cadastrados se a associação não tiver
+//     ultrapassado o patient_limit (definido no plano)
+//   - Isso é garantido pela TRIGGER enforce_patient_limit_before_insert
 // ================================================================
 
 package models
@@ -33,8 +39,13 @@ import (
 
 // Patient representa um paciente da associação
 type Patient struct {
-	// === CAMPOS BASE ===
+	// === CAMPOS BASE (EMBUTIDOS) ===
 	BaseModel
+
+	// === CHAVE ESTRANGEIRA PARA MULTI-TENANCY ===
+	// AssociationID - QUAL associação este paciente pertence
+	// ⚠️ NUNCA deixar nulo! Todo paciente pertence a uma associação
+	AssociationID uuid.UUID `gorm:"type:uuid;not null;index" json:"association_id"`
 
 	// === RELACIONAMENTO COM USUÁRIO ===
 	// UserID - Chave estrangeira para users (pode ser NULL se não tiver acesso ao portal)
@@ -52,15 +63,16 @@ type Patient struct {
 	Gender string `json:"gender,omitempty"`
 
 	// === DOCUMENTOS (OBRIGATÓRIOS) ===
-	// CPF - Cadastro de Pessoa Física (único e obrigatório)
-	CPF string `gorm:"unique;not null" json:"cpf"`
+	// CPF - Cadastro de Pessoa Física (único DENTRO da associação)
+	// A constraint UNIQUE(cpf, association_id) garante isso
+	CPF string `gorm:"not null" json:"cpf"`
 
 	// RG - Registro Geral (opcional)
 	RG string `json:"rg,omitempty"`
 
 	// === CONTATO ===
 	Phone    string `json:"phone,omitempty"`
-	WhatsApp string `gorm:"column:whatsapp" json:"whatsapp"` // ✅ CORRIGIDO
+	WhatsApp string `gorm:"column:whatsapp" json:"whatsapp"`
 	Email    string `json:"email,omitempty"`
 
 	// === ENDEREÇO ===
@@ -86,8 +98,9 @@ type Patient struct {
 	// ApprovedAt - Data em que o paciente foi aprovado
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 
-	// === RELACIONAMENTOS (NÃO SÃO SALVOS NO BANCO, APENAS PARA QUERIES) ===
+	// === RELACIONAMENTOS ===
 	User          *User             `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Association   *Association      `gorm:"foreignKey:AssociationID" json:"association,omitempty"`
 	Documents     []PatientDocument `gorm:"foreignKey:PatientID" json:"documents,omitempty"`
 	Prescriptions []Prescription    `gorm:"foreignKey:PatientID" json:"prescriptions,omitempty"`
 	Orders        []Order           `gorm:"foreignKey:PatientID" json:"orders,omitempty"`

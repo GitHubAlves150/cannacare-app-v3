@@ -1,3 +1,17 @@
+// ================================================================
+// CANNACARE - MAIN (PONTO DE ENTRADA)
+// ================================================================
+// Este é o arquivo principal que inicia a aplicação.
+// 
+// RESPONSABILIDADES:
+//   1. Carregar configurações do .env
+//   2. Conectar ao banco de dados (PostgreSQL)
+//   3. Rodar as migrações (criar/atualizar tabelas)
+//   4. Inicializar todos os serviços
+//   5. Configurar as rotas da API
+//   6. Iniciar o servidor HTTP
+// ================================================================
+
 package main
 
 import (
@@ -18,40 +32,47 @@ import (
 )
 
 func main() {
-	// ============================================================
+	// ================================================================
 	// PASSO 1: Carregar configurações
-	// ============================================================
+	// ================================================================
 	log.Println("📋 Carregando configurações...")
 	cfg := config.Load()
 
-	// ============================================================
-	// PASSO 2: Conectar ao banco
-	// ============================================================
+	// ================================================================
+	// PASSO 2: Conectar ao banco de dados
+	// ================================================================
 	log.Println("🔌 Conectando ao banco de dados...")
 	if err := database.Connect(cfg); err != nil {
 		log.Fatal("❌ Falha ao conectar ao banco:", err)
 	}
 	defer database.Close()
 
-	// ============================================================
+	// ================================================================
 	// PASSO 3: Rodar migrações
-	// ============================================================
+	// ================================================================
 	log.Println("🔄 Rodando migrações...")
 	if err := database.Migrate(); err != nil {
 		log.Fatal("❌ Falha ao rodar migrações:", err)
 	}
 
-	// ============================================================
-	// PASSO 4: Inicializar serviços
-	// ============================================================
-	log.Println("🔐 Inicializando serviços...")
-
+	// ================================================================
+	// PASSO 4: Inicializar JWT Service
+	// ================================================================
+	log.Println("🔐 Inicializando JWT...")
 	jwtService := jwt.NewJWTService(cfg.JWTSecret, cfg.JWTExpiresIn)
 
+	// ================================================================
+	// PASSO 5: Inicializar SERVICES (COM MIGRAÇÃO)
+	// ================================================================
+	log.Println("⚙️  Inicializando serviços...")
+	
+	// --- Serviços de autenticação ---
 	authService := services.NewAuthService(database.DB, jwtService)
-	doctorService := services.NewDoctorService(database.DB)
+
+	// --- Serviços de domínio ---
+	// ⚠️ IMPORTANTE: Todos os services agora recebem association_id
 	patientService := services.NewPatientService(database.DB)
-	documentService := services.NewDocumentService(database.DB)
+	doctorService := services.NewDoctorService(database.DB)
 	prescriptionService := services.NewPrescriptionService(database.DB)
 	anamneseService := services.NewAnamneseService(database.DB)
 	productService := services.NewProductService(database.DB)
@@ -59,11 +80,16 @@ func main() {
 	orderService := services.NewOrderService(database.DB)
 	financialService := services.NewFinancialService(database.DB)
 	dashboardService := services.NewDashboardService(database.DB)
+	documentService := services.NewDocumentService(database.DB)
 
+	// ================================================================
+	// PASSO 6: Inicializar HANDLERS
+	// ================================================================
+	log.Println("🎯 Inicializando handlers...")
+	
 	authHandler := handlers.NewAuthHandler(authService)
-	doctorHandler := handlers.NewDoctorHandler(doctorService)
 	patientHandler := handlers.NewPatientHandler(patientService)
-	documentHandler := handlers.NewDocumentHandler(documentService)
+	doctorHandler := handlers.NewDoctorHandler(doctorService)
 	prescriptionHandler := handlers.NewPrescriptionHandler(prescriptionService)
 	anamneseHandler := handlers.NewAnamneseHandler(anamneseService)
 	productHandler := handlers.NewProductHandler(productService)
@@ -71,17 +97,18 @@ func main() {
 	orderHandler := handlers.NewOrderHandler(orderService)
 	financialHandler := handlers.NewFinancialHandler(financialService)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
+	documentHandler := handlers.NewDocumentHandler(documentService)
 
-	// ============================================================
-	// PASSO 5: Configurar rotas
-	// ============================================================
-	log.Println("🛣️ Configurando rotas...")
+	// ================================================================
+	// PASSO 7: Configurar ROTAS
+	// ================================================================
+	log.Println("🛣️  Configurando rotas...")
 	r := chi.NewRouter()
 
-	// Middlewares globais
+	// --- Middlewares globais ---
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
-	r.Use(middleware.LoggerMiddleware) // nosso logger
+	r.Use(middleware.LoggerMiddleware)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -90,32 +117,35 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// ============================================================
-	// ROTAS PÚBLICAS
-	// ============================================================
+	// --- Rotas públicas ---
 	r.Get("/health", healthCheckHandler)
 	r.Get("/", welcomeHandler)
 	r.Post("/api/auth/register", authHandler.Register)
 	r.Post("/api/auth/login", authHandler.Login)
 
-	// ============================================================
-	// ROTAS PROTEGIDAS
-	// ============================================================
+	// --- Rotas protegidas ---
 	r.Group(func(r chi.Router) {
+		// ⚠️ Aplica o middleware de autenticação em TODAS as rotas abaixo
 		r.Use(middleware.AuthMiddleware(jwtService))
 
-		// --- Rota de teste ---
+		// ================================================================
+		// ROTA DE TESTE - VERIFICA AUTENTICAÇÃO
+		// ================================================================
 		r.Get("/api/protected", func(w http.ResponseWriter, r *http.Request) {
 			userID := r.Context().Value(middleware.UserIDKey).(string)
+			associationID := r.Context().Value(middleware.AssociationIDKey).(string)
 			role := r.Context().Value(middleware.UserRoleKey).(string)
 			utils.SendSuccess(w, http.StatusOK, map[string]string{
-				"message": "✅ Você está autenticado!",
-				"user_id": userID,
-				"role":    role,
+				"message":       "✅ Você está autenticado!",
+				"user_id":       userID,
+				"association_id": associationID,
+				"role":          role,
 			})
 		})
 
-		// --- Médicos (admin, secretaria, coordenacao) ---
+		// ================================================================
+		// MÉDICOS (admin, secretaria, coordenacao)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
 			r.Post("/api/doctors", doctorHandler.Create)
@@ -126,7 +156,9 @@ func main() {
 			r.Delete("/api/doctors/{id}", doctorHandler.Delete)
 		})
 
-		// --- Pacientes (admin, secretaria, coordenacao, acolhimento) ---
+		// ================================================================
+		// PACIENTES (admin, secretaria, coordenacao, acolhimento)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
 			r.Post("/api/patients", patientHandler.Create)
@@ -138,7 +170,9 @@ func main() {
 			r.Delete("/api/patients/{id}", patientHandler.Delete)
 		})
 
-		// --- Documentos (admin, secretaria, coordenacao, acolhimento) ---
+		// ================================================================
+		// DOCUMENTOS (admin, secretaria, coordenacao, acolhimento)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
 			r.Post("/api/patients/{id}/documents", documentHandler.Upload)
@@ -149,7 +183,9 @@ func main() {
 			r.Delete("/api/documents/{id}", documentHandler.Delete)
 		})
 
-		// --- Prescrições (admin, secretaria, coordenacao, acolhimento) ---
+		// ================================================================
+		// PRESCRIÇÕES (admin, secretaria, coordenacao, acolhimento)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
 			r.Post("/api/prescriptions", prescriptionHandler.Create)
@@ -162,7 +198,9 @@ func main() {
 			r.Post("/api/prescriptions/update-status", prescriptionHandler.UpdateAllStatus)
 		})
 
-		// --- Anamnese (admin, secretaria, coordenacao, acolhimento) ---
+		// ================================================================
+		// ANAMNESE (admin, secretaria, coordenacao, acolhimento)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "acolhimento"))
 			r.Post("/api/patients/{id}/anamnesis", anamneseHandler.Create)
@@ -173,7 +211,9 @@ func main() {
 			r.Delete("/api/anamnesis/{id}", anamneseHandler.Delete)
 		})
 
-		// --- Produtos (admin, secretaria, coordenacao) ---
+		// ================================================================
+		// PRODUTOS (admin, secretaria, coordenacao)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
 			r.Post("/api/products", productHandler.Create)
@@ -185,7 +225,9 @@ func main() {
 			r.Delete("/api/products/{id}", productHandler.Delete)
 		})
 
-		// --- Estoque (admin, secretaria, coordenacao, farmacia) ---
+		// ================================================================
+		// ESTOQUE (admin, secretaria, coordenacao, farmacia)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
 			r.Post("/api/stock/lots", stockHandler.CreateLot)
@@ -198,7 +240,9 @@ func main() {
 			r.Get("/api/stock/summary", stockHandler.GetStockSummary)
 		})
 
-		// --- Pedidos (admin, secretaria, coordenacao, farmacia) ---
+		// ================================================================
+		// PEDIDOS (admin, secretaria, coordenacao, farmacia)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao", "farmacia"))
 			r.Post("/api/orders", orderHandler.Create)
@@ -210,7 +254,9 @@ func main() {
 			r.Post("/api/orders/{id}/label", orderHandler.GenerateLabel)
 		})
 
-		// --- Financeiro (admin, secretaria, coordenacao) ---
+		// ================================================================
+		// FINANCEIRO (admin, secretaria, coordenacao)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "secretaria", "coordenacao"))
 			r.Post("/api/financial/subscriptions", financialHandler.CreateSubscription)
@@ -224,7 +270,9 @@ func main() {
 			r.Get("/api/financial/overdue", financialHandler.GetOverdueSubscriptions)
 		})
 
-		// --- Dashboard (admin, coordenacao) ---
+		// ================================================================
+		// DASHBOARD (admin, coordenacao)
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin", "coordenacao"))
 			r.Get("/api/dashboard/overview", dashboardHandler.GetOverview)
@@ -234,7 +282,9 @@ func main() {
 			r.Get("/api/dashboard/low-stock", dashboardHandler.GetLowStock)
 		})
 
-		// --- Admin Only ---
+		// ================================================================
+		// ADMIN ONLY
+		// ================================================================
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RoleMiddleware("admin"))
 			r.Get("/api/admin", func(w http.ResponseWriter, r *http.Request) {
@@ -245,9 +295,9 @@ func main() {
 		})
 	})
 
-	// ============================================================
-	// PASSO 6: Iniciar servidor
-	// ============================================================
+	// ================================================================
+	// PASSO 8: Iniciar servidor
+	// ================================================================
 	addr := ":" + cfg.ServerPort
 
 	log.Println("")
@@ -275,9 +325,8 @@ func main() {
 }
 
 // ================================================================
-// HANDLERS AUXILIARES
+// FUNÇÃO: HEALTH CHECK HANDLER
 // ================================================================
-
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	if err := database.DB.Exec("SELECT 1").Error; err != nil {
 		utils.SendError(w, http.StatusServiceUnavailable, "Banco de dados indisponível")
@@ -287,18 +336,19 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 		"status":   "ok",
 		"database": "connected",
 		"message":  "CannaCare API está funcionando!",
-		"version":  "1.0.0",
-		"etapa":    "14 - Middleware e Permissões",
+		"version":  "2.0.0 (Multi-Tenancy)",
 	})
 }
 
+// ================================================================
+// FUNÇÃO: WELCOME HANDLER
+// ================================================================
 func welcomeHandler(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
 		"message": "🌿 Bem-vindo à API CannaCare!",
-		"version": "1.0.0",
-		"etapa":   "14 - Middleware e Permissões",
+		"version": "2.0.0 (Multi-Tenancy)",
 		"documentation": map[string]string{
-			"POST /api/auth/register":      "Registrar usuário",
+			"POST /api/auth/register":      "Registrar nova associação + admin",
 			"POST /api/auth/login":         "Login",
 			"GET  /api/doctors":            "Listar médicos",
 			"GET  /api/patients":           "Listar pacientes",

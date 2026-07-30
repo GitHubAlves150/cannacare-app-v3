@@ -1,0 +1,800 @@
+-- ================================================================
+-- CANNACARE - SCRIPT COMPLETO DO BANCO DE DADOS
+-- ================================================================
+-- Versão: 3.0
+-- Data: 2026-07-30
+-- Descrição: Estrutura completa do banco com multi-tenancy
+--            Inclui: tabelas, views, funções, triggers e dados iniciais
+-- ================================================================
+
+-- ================================================================
+-- 1. HABILITAR EXTENSÃO UUID
+-- ================================================================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ================================================================
+-- 2. FUNÇÃO PARA ATUALIZAR updated_at AUTOMATICAMENTE
+-- ================================================================
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ================================================================
+-- 3. TABELA: ASSOCIAÇÕES (MULTI-TENANT)
+-- ================================================================
+-- Esta é a tabela MESTRA que isola os dados de cada associação.
+-- Todas as outras tabelas se vinculam a ela via association_id.
+-- ================================================================
+CREATE TABLE associations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(200) NOT NULL,
+    cnpj VARCHAR(18) UNIQUE NOT NULL,
+    email VARCHAR(200) UNIQUE NOT NULL,
+    phone VARCHAR(20),
+    address TEXT,
+    plan VARCHAR(50) DEFAULT 'basic' CHECK (plan IN ('basic', 'premium', 'enterprise')),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'suspended', 'cancelled')),
+    patient_limit INTEGER DEFAULT 50,
+    trial_ends_at TIMESTAMP,
+    stripe_customer_id VARCHAR(100),
+    subscription_id VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+-- Índices da tabela associations
+CREATE INDEX idx_associations_cnpj ON associations(cnpj);
+CREATE INDEX idx_associations_email ON associations(email);
+CREATE INDEX idx_associations_status ON associations(status);
+
+-- Trigger para updated_at
+CREATE TRIGGER update_associations_updated_at 
+BEFORE UPDATE ON associations 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 4. TABELA: USUÁRIOS
+-- ================================================================
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    name VARCHAR(200) NOT NULL,
+    email VARCHAR(200) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL CHECK (role IN ('admin', 'secretaria', 'acolhimento', 'farmacia', 'coordenacao')),
+    is_active BOOLEAN DEFAULT TRUE,
+    last_login_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    UNIQUE(email, association_id)
+);
+
+CREATE INDEX idx_users_association ON users(association_id);
+CREATE INDEX idx_users_email ON users(email);
+
+CREATE TRIGGER update_users_updated_at 
+BEFORE UPDATE ON users 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 5. TABELA: PACIENTES
+-- ================================================================
+CREATE TABLE patients (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    full_name VARCHAR(200) NOT NULL,
+    birth_date DATE NOT NULL,
+    gender VARCHAR(20),
+    cpf VARCHAR(14) NOT NULL,
+    rg VARCHAR(20),
+    phone VARCHAR(20),
+    whatsapp VARCHAR(20),
+    email VARCHAR(200),
+    address_street VARCHAR(200),
+    address_number VARCHAR(20),
+    address_complement VARCHAR(100),
+    address_neighborhood VARCHAR(100),
+    address_city VARCHAR(100),
+    address_state VARCHAR(2),
+    address_zipcode VARCHAR(10),
+    status VARCHAR(50) NOT NULL DEFAULT 'pendente_documentacao' 
+        CHECK (status IN ('pendente_documentacao', 'em_analise', 'aprovado', 'negado', 'assistente_social')),
+    is_social_patient BOOLEAN DEFAULT FALSE,
+    social_assistant_notes TEXT,
+    approved_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    UNIQUE(cpf, association_id)
+);
+
+CREATE INDEX idx_patients_association ON patients(association_id);
+CREATE INDEX idx_patients_status ON patients(status);
+CREATE INDEX idx_patients_cpf ON patients(cpf);
+
+CREATE TRIGGER update_patients_updated_at 
+BEFORE UPDATE ON patients 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 6. TABELA: HISTÓRICO DE STATUS DO PACIENTE
+-- ================================================================
+CREATE TABLE patient_status_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    old_status VARCHAR(50),
+    new_status VARCHAR(50) NOT NULL,
+    changed_by UUID REFERENCES users(id),
+    reason TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_patient_status_history_association ON patient_status_history(association_id);
+CREATE INDEX idx_patient_status_history_patient ON patient_status_history(patient_id);
+
+-- ================================================================
+-- 7. TABELA: DOCUMENTOS DO PACIENTE
+-- ================================================================
+CREATE TABLE patient_documents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    document_type VARCHAR(50) NOT NULL 
+        CHECK (document_type IN ('rg_cpf', 'comprovante_residencia', 'laudo_medico', 'receita_medica', 'autorizacao_anvisa', 'termo_consentimento')),
+    file_url TEXT NOT NULL,
+    file_name VARCHAR(255),
+    file_size BIGINT,
+    mime_type VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'em_analise' 
+        CHECK (status IN ('em_analise', 'aprovado', 'rejeitado')),
+    reviewed_by UUID REFERENCES users(id),
+    reviewed_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX idx_patient_documents_association ON patient_documents(association_id);
+CREATE INDEX idx_patient_documents_patient ON patient_documents(patient_id);
+
+-- ================================================================
+-- 8. TABELA: MÉDICOS PRESCRITORES
+-- ================================================================
+CREATE TABLE doctors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    name VARCHAR(200) NOT NULL,
+    crm VARCHAR(20) NOT NULL,
+    crm_state VARCHAR(2) NOT NULL,
+    specialty VARCHAR(100),
+    phone VARCHAR(20),
+    email VARCHAR(200),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    UNIQUE(crm, crm_state, association_id)
+);
+
+CREATE INDEX idx_doctors_association ON doctors(association_id);
+
+CREATE TRIGGER update_doctors_updated_at 
+BEFORE UPDATE ON doctors 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 9. TABELA: PRESCRIÇÕES (RECEITAS)
+-- ================================================================
+CREATE TABLE prescriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    doctor_id UUID NOT NULL REFERENCES doctors(id),
+    cid VARCHAR(10) NOT NULL,
+    issue_date DATE NOT NULL,
+    expiration_date DATE NOT NULL,
+    status VARCHAR(20) DEFAULT 'valida' 
+        CHECK (status IN ('valida', 'proxima_vencer', 'vencida')),
+    is_active BOOLEAN DEFAULT TRUE,
+    prescription_file_url TEXT,
+    prescription_file_name VARCHAR(255),
+    validated_by UUID REFERENCES users(id),
+    validated_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    CONSTRAINT valid_expiration CHECK (expiration_date >= issue_date)
+);
+
+CREATE INDEX idx_prescriptions_association ON prescriptions(association_id);
+CREATE INDEX idx_prescriptions_patient ON prescriptions(patient_id);
+CREATE INDEX idx_prescriptions_expiration ON prescriptions(expiration_date);
+CREATE INDEX idx_prescriptions_status ON prescriptions(status);
+
+CREATE TRIGGER update_prescriptions_updated_at 
+BEFORE UPDATE ON prescriptions 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 10. TABELA: ITENS DA PRESCRIÇÃO
+-- ================================================================
+CREATE TABLE prescription_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    prescription_id UUID NOT NULL REFERENCES prescriptions(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL,
+    dosage_instructions TEXT NOT NULL,
+    quantity_recommended INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(prescription_id, product_id)
+);
+
+CREATE INDEX idx_prescription_items_association ON prescription_items(association_id);
+CREATE INDEX idx_prescription_items_prescription ON prescription_items(prescription_id);
+
+-- ================================================================
+-- 11. TABELA: PRODUTOS (CATÁLOGO)
+-- ================================================================
+CREATE TABLE products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    unit_price DECIMAL(10,2) NOT NULL,
+    min_stock_alert INTEGER DEFAULT 10,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX idx_products_association ON products(association_id);
+
+CREATE TRIGGER update_products_updated_at 
+BEFORE UPDATE ON products 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 12. TABELA: LOTES DE PRODUTOS
+-- ================================================================
+CREATE TABLE product_lots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    lot_number VARCHAR(50) NOT NULL,
+    expiration_date DATE NOT NULL,
+    current_quantity INTEGER NOT NULL DEFAULT 0,
+    initial_quantity INTEGER NOT NULL DEFAULT 0,
+    supplier VARCHAR(200),
+    purchase_date DATE,
+    purchase_price DECIMAL(10,2),
+    received_by UUID REFERENCES users(id),
+    received_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    UNIQUE(product_id, lot_number)
+);
+
+CREATE INDEX idx_product_lots_association ON product_lots(association_id);
+CREATE INDEX idx_product_lots_expiration ON product_lots(expiration_date);
+CREATE INDEX idx_product_lots_product ON product_lots(product_id);
+
+CREATE TRIGGER update_product_lots_updated_at 
+BEFORE UPDATE ON product_lots 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 13. TABELA: MOVIMENTAÇÃO DE ESTOQUE
+-- ================================================================
+CREATE TABLE stock_movements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    product_lot_id UUID NOT NULL REFERENCES product_lots(id) ON DELETE CASCADE,
+    order_id UUID NULL,
+    type VARCHAR(20) NOT NULL 
+        CHECK (type IN ('entrada', 'baixa_pedido', 'ajuste_manual', 'perda', 'devolucao')),
+    quantity INTEGER NOT NULL,
+    previous_quantity INTEGER NOT NULL,
+    new_quantity INTEGER NOT NULL,
+    user_id UUID REFERENCES users(id) NOT NULL,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_stock_movements_association ON stock_movements(association_id);
+CREATE INDEX idx_stock_movements_lot ON stock_movements(product_lot_id);
+CREATE INDEX idx_stock_movements_order ON stock_movements(order_id);
+
+-- ================================================================
+-- 14. TABELA: ANUIDADES
+-- ================================================================
+CREATE TABLE subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    due_date DATE NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    status VARCHAR(20) DEFAULT 'pendente' 
+        CHECK (status IN ('pendente', 'pago', 'atrasado', 'cancelado')),
+    paid_at TIMESTAMP,
+    payment_id UUID,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX idx_subscriptions_association ON subscriptions(association_id);
+CREATE INDEX idx_subscriptions_patient ON subscriptions(patient_id);
+CREATE INDEX idx_subscriptions_status ON subscriptions(status);
+
+CREATE TRIGGER update_subscriptions_updated_at 
+BEFORE UPDATE ON subscriptions 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 15. TABELA: PEDIDOS
+-- ================================================================
+CREATE TABLE orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    prescription_id UUID NOT NULL REFERENCES prescriptions(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'pendente' 
+        CHECK (status IN ('pendente', 'separado', 'dispensa', 'correio', 'entregue', 'cancelado')),
+    shipping_carrier VARCHAR(100),
+    tracking_code VARCHAR(100),
+    shipping_label_url TEXT,
+    shipping_cost DECIMAL(10,2) DEFAULT 0,
+    total_amount DECIMAL(10,2) NOT NULL,
+    notes TEXT,
+    order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    status_updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX idx_orders_association ON orders(association_id);
+CREATE INDEX idx_orders_patient ON orders(patient_id);
+CREATE INDEX idx_orders_status ON orders(status);
+CREATE INDEX idx_orders_prescription ON orders(prescription_id);
+
+CREATE TRIGGER update_orders_updated_at 
+BEFORE UPDATE ON orders 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 16. TABELA: ITENS DO PEDIDO
+-- ================================================================
+CREATE TABLE order_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    product_lot_id UUID NOT NULL REFERENCES product_lots(id),
+    quantity INTEGER NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    total_price DECIMAL(10,2) GENERATED ALWAYS AS (quantity * unit_price) STORED,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_order_items_association ON order_items(association_id);
+CREATE INDEX idx_order_items_order ON order_items(order_id);
+
+-- ================================================================
+-- 17. TABELA: PAGAMENTOS
+-- ================================================================
+CREATE TABLE payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    order_id UUID NULL REFERENCES orders(id) ON DELETE SET NULL,
+    subscription_id UUID NULL REFERENCES subscriptions(id) ON DELETE SET NULL,
+    payment_type VARCHAR(20) NOT NULL 
+        CHECK (payment_type IN ('anuidade', 'compra_produto', 'doacao')),
+    payment_method VARCHAR(20) NOT NULL 
+        CHECK (payment_method IN ('pix', 'boleto', 'cartao', 'transferencia')),
+    amount DECIMAL(10,2) NOT NULL,
+    installments INTEGER DEFAULT 1,
+    receipt_url TEXT,
+    receipt_number VARCHAR(50),
+    status VARCHAR(20) DEFAULT 'pendente' 
+        CHECK (status IN ('pendente', 'pago', 'recusado', 'estornado')),
+    payment_date DATE,
+    paid_at TIMESTAMP,
+    transaction_id VARCHAR(100),
+    gateway_response JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
+    CONSTRAINT payment_source_check CHECK (
+        (order_id IS NOT NULL AND subscription_id IS NULL) OR
+        (order_id IS NULL AND subscription_id IS NOT NULL) OR
+        (payment_type = 'doacao' AND order_id IS NULL AND subscription_id IS NULL)
+    )
+);
+
+CREATE INDEX idx_payments_association ON payments(association_id);
+CREATE INDEX idx_payments_patient ON payments(patient_id);
+CREATE INDEX idx_payments_order ON payments(order_id);
+CREATE INDEX idx_payments_status ON payments(status);
+
+CREATE TRIGGER update_payments_updated_at 
+BEFORE UPDATE ON payments 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 18. TABELA: ANAMNESE (ACOLHIMENTO)
+-- ================================================================
+CREATE TABLE anamneses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
+    responsible_user_id UUID NOT NULL REFERENCES users(id),
+    type VARCHAR(30) NOT NULL 
+        CHECK (type IN ('inicial', 'rastreio_1_mes', 'rastreio_3_meses', 'rastreio_6_meses', 'acompanhamento_continuo')),
+    symptoms TEXT,
+    symptom_intensity INTEGER CHECK (symptom_intensity BETWEEN 1 AND 10),
+    side_effects TEXT,
+    side_effect_intensity INTEGER CHECK (side_effect_intensity BETWEEN 1 AND 10),
+    treatment_adherence VARCHAR(20) CHECK (treatment_adherence IN ('alta', 'media', 'baixa')),
+    challenges TEXT,
+    improvements TEXT,
+    additional_notes TEXT,
+    weight DECIMAL(5,2),
+    blood_pressure VARCHAR(20),
+    heart_rate INTEGER,
+    extra_responses JSONB,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_anamneses_association ON anamneses(association_id);
+CREATE INDEX idx_anamneses_patient ON anamneses(patient_id);
+CREATE INDEX idx_anamneses_type ON anamneses(type);
+
+CREATE TRIGGER update_anamneses_updated_at 
+BEFORE UPDATE ON anamneses 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- 19. TABELA: NOTIFICAÇÕES
+-- ================================================================
+CREATE TABLE notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    association_id UUID NOT NULL REFERENCES associations(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL 
+        CHECK (type IN ('prescription_expiring', 'prescription_expired', 'low_stock', 'product_expiring', 'payment_due', 'order_status')),
+    title VARCHAR(255) NOT NULL,
+    message TEXT NOT NULL,
+    read_at TIMESTAMP,
+    action_url TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_notifications_association ON notifications(association_id);
+CREATE INDEX idx_notifications_user ON notifications(user_id);
+CREATE INDEX idx_notifications_patient ON notifications(patient_id);
+CREATE INDEX idx_notifications_read ON notifications(read_at);
+
+-- ================================================================
+-- 20. FUNÇÃO: VERIFICAR LIMITE DE PACIENTES
+-- ================================================================
+CREATE OR REPLACE FUNCTION check_patient_limit(p_association_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    association_record associations%ROWTYPE;
+    patient_count INTEGER;
+BEGIN
+    -- Buscar dados da associação
+    SELECT * INTO association_record 
+    FROM associations 
+    WHERE id = p_association_id;
+    
+    -- Contar pacientes ativos da associação
+    SELECT COUNT(*) INTO patient_count 
+    FROM patients 
+    WHERE association_id = p_association_id 
+    AND deleted_at IS NULL;
+    
+    -- Verificar se atingiu o limite
+    IF association_record.plan = 'basic' AND patient_count >= association_record.patient_limit THEN
+        RAISE EXCEPTION 'Limite de pacientes do plano básico atingido. Faça upgrade para o plano premium.';
+        RETURN FALSE;
+    END IF;
+    
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ================================================================
+-- 21. FUNÇÃO DA TRIGGER PARA LIMITE DE PACIENTES
+-- ================================================================
+CREATE OR REPLACE FUNCTION enforce_patient_limit()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM check_patient_limit(NEW.association_id);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ================================================================
+-- 22. TRIGGER: IMPEDIR CADASTRO ACIMA DO LIMITE
+-- ================================================================
+CREATE TRIGGER enforce_patient_limit_before_insert
+BEFORE INSERT ON patients
+FOR EACH ROW
+EXECUTE FUNCTION enforce_patient_limit();
+
+-- ================================================================
+-- 23. FUNÇÃO: ATUALIZAR STATUS DA RECEITA AUTOMATICAMENTE
+-- ================================================================
+CREATE OR REPLACE FUNCTION update_prescription_status()
+RETURNS VOID AS $$
+BEGIN
+    -- Atualizar para "proxima_vencer" (15 dias antes)
+    UPDATE prescriptions
+    SET status = 'proxima_vencer'
+    WHERE expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '15 days'
+    AND status NOT IN ('proxima_vencer', 'vencida')
+    AND is_active = true;
+    
+    -- Atualizar para "vencida"
+    UPDATE prescriptions
+    SET status = 'vencida',
+        is_active = false
+    WHERE expiration_date < CURRENT_DATE
+    AND status != 'vencida';
+END;
+$$ LANGUAGE plpgsql;
+
+-- ================================================================
+-- 24. FUNÇÃO: DAR BAIXA NO ESTOQUE AO FINALIZAR PEDIDO
+-- ================================================================
+CREATE OR REPLACE FUNCTION process_order_stock(order_id UUID)
+RETURNS VOID AS $$
+DECLARE
+    item RECORD;
+BEGIN
+    -- Para cada item do pedido
+    FOR item IN 
+        SELECT oi.*, pl.current_quantity as current_stock
+        FROM order_items oi
+        JOIN product_lots pl ON pl.id = oi.product_lot_id
+        WHERE oi.order_id = process_order_stock.order_id
+    LOOP
+        -- Verificar se há estoque suficiente
+        IF item.current_stock < item.quantity THEN
+            RAISE EXCEPTION 'Estoque insuficiente para o lote %', item.product_lot_id;
+        END IF;
+        
+        -- Atualizar quantidade no lote
+        UPDATE product_lots
+        SET current_quantity = current_quantity - item.quantity
+        WHERE id = item.product_lot_id;
+        
+        -- Registrar movimentação
+        INSERT INTO stock_movements (
+            product_lot_id,
+            order_id,
+            type,
+            quantity,
+            previous_quantity,
+            new_quantity,
+            user_id,
+            notes,
+            association_id
+        ) VALUES (
+            item.product_lot_id,
+            process_order_stock.order_id,
+            'baixa_pedido',
+            -item.quantity,
+            item.current_stock,
+            item.current_stock - item.quantity,
+            (SELECT user_id FROM orders WHERE id = process_order_stock.order_id),
+            'Baixa automática do pedido',
+            (SELECT association_id FROM orders WHERE id = process_order_stock.order_id)
+        );
+    END LOOP;
+    
+    -- Atualizar status do pedido para "separado"
+    UPDATE orders
+    SET status = 'separado',
+        status_updated_at = CURRENT_TIMESTAMP
+    WHERE id = process_order_stock.order_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ================================================================
+-- 25. VIEWS PARA RELATÓRIOS (COM FILTRO POR ASSOCIAÇÃO)
+-- ================================================================
+
+-- VIEW 1: Pacientes com receitas vencidas
+CREATE OR REPLACE VIEW vw_expired_prescriptions AS
+SELECT 
+    p.id as patient_id,
+    p.full_name,
+    p.cpf,
+    p.phone,
+    pr.id as prescription_id,
+    pr.expiration_date,
+    pr.doctor_id,
+    d.name as doctor_name,
+    d.crm,
+    p.association_id,
+    EXTRACT(DAY FROM AGE(CURRENT_DATE, pr.expiration_date)) as days_expired
+FROM patients p
+JOIN prescriptions pr ON pr.patient_id = p.id
+JOIN doctors d ON d.id = pr.doctor_id
+WHERE pr.expiration_date < CURRENT_DATE
+AND pr.is_active = true
+AND p.status = 'aprovado'
+AND p.deleted_at IS NULL
+ORDER BY pr.expiration_date ASC;
+
+-- VIEW 2: Estoque baixo
+CREATE OR REPLACE VIEW vw_low_stock AS
+SELECT 
+    pl.id as lot_id,
+    p.id as product_id,
+    p.name as product_name,
+    pl.lot_number,
+    pl.expiration_date,
+    pl.current_quantity,
+    p.min_stock_alert,
+    (p.min_stock_alert - pl.current_quantity) as missing_units,
+    p.association_id
+FROM product_lots pl
+JOIN products p ON p.id = pl.product_id
+WHERE pl.current_quantity <= p.min_stock_alert
+AND pl.expiration_date > CURRENT_DATE
+AND pl.deleted_at IS NULL
+ORDER BY (p.min_stock_alert - pl.current_quantity) DESC;
+
+-- VIEW 3: Anuidades em atraso
+CREATE OR REPLACE VIEW vw_overdue_subscriptions AS
+SELECT 
+    s.id as subscription_id,
+    p.id as patient_id,
+    p.full_name,
+    p.phone,
+    s.due_date,
+    s.amount,
+    p.association_id,
+    EXTRACT(DAY FROM AGE(CURRENT_DATE, s.due_date)) as days_overdue
+FROM subscriptions s
+JOIN patients p ON p.id = s.patient_id
+WHERE s.status = 'atrasado'
+AND s.deleted_at IS NULL
+ORDER BY s.due_date ASC;
+
+-- VIEW 4: Dashboard - Pacientes ativos/inativos
+CREATE OR REPLACE VIEW vw_patient_dashboard AS
+SELECT 
+    association_id,
+    status,
+    COUNT(*) as total,
+    COUNT(CASE WHEN is_social_patient = true THEN 1 END) as social_patients,
+    COUNT(CASE WHEN created_at >= CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as last_30_days
+FROM patients
+WHERE deleted_at IS NULL
+GROUP BY association_id, status;
+
+-- VIEW 5: Médicos que mais prescrevem
+CREATE OR REPLACE VIEW vw_top_doctors AS
+SELECT 
+    d.id as doctor_id,
+    d.name as doctor_name,
+    d.crm,
+    d.specialty,
+    d.association_id,
+    COUNT(pr.id) as total_prescriptions,
+    COUNT(DISTINCT pr.patient_id) as unique_patients
+FROM doctors d
+LEFT JOIN prescriptions pr ON pr.doctor_id = d.id
+WHERE d.is_active = true
+AND d.deleted_at IS NULL
+GROUP BY d.id, d.name, d.crm, d.specialty, d.association_id
+ORDER BY total_prescriptions DESC;
+
+-- VIEW 6: Movimentação de estoque consolidada
+CREATE OR REPLACE VIEW vw_stock_summary AS
+SELECT 
+    p.id as product_id,
+    p.name as product_name,
+    p.association_id,
+    COUNT(DISTINCT pl.id) as total_lots,
+    COALESCE(SUM(pl.current_quantity), 0) as total_quantity,
+    COALESCE(AVG(pl.current_quantity), 0) as avg_per_lot,
+    MIN(pl.expiration_date) as earliest_expiration
+FROM products p
+LEFT JOIN product_lots pl ON pl.product_id = p.id
+WHERE p.is_active = true
+AND p.deleted_at IS NULL
+GROUP BY p.id, p.name, p.association_id
+ORDER BY p.name ASC;
+
+-- ================================================================
+-- 26. DADOS INICIAIS
+-- ================================================================
+
+-- Criar associação padrão para o admin
+INSERT INTO associations (id, name, cnpj, email, plan, status, patient_limit)
+VALUES (
+    gen_random_uuid(),
+    'CannaCare Admin',
+    '00.000.000/0001-00',
+    'admin@cannacare.com',
+    'enterprise',
+    'active',
+    999999
+) ON CONFLICT (email) DO NOTHING;
+
+-- Criar usuário admin (senha: admin123)
+INSERT INTO users (id, association_id, name, email, password_hash, role)
+SELECT 
+    gen_random_uuid(),
+    a.id,
+    'Administrador',
+    'admin@cannacare.com',
+    '$2a$10$K8WrxL5rXB3p.OqM9zl5aeZ5EoW7JjLtYq2xNO6hVZ.SZ9y5Xb4bW',
+    'admin'
+FROM associations a
+WHERE a.email = 'admin@cannacare.com'
+ON CONFLICT (email, association_id) DO NOTHING;
+
+-- ================================================================
+-- 27. COMMIT FINAL
+-- ================================================================
+COMMIT;
+
+-- ================================================================
+-- 28. VERIFICAÇÃO FINAL
+-- ================================================================
+
+-- Tabelas criadas
+SELECT 'TABELAS CRIADAS:' as status;
+SELECT table_name 
+FROM information_schema.tables 
+WHERE table_schema = 'public' 
+AND table_type = 'BASE TABLE'
+ORDER BY table_name;
+
+-- Views criadas
+SELECT 'VIEWS CRIADAS:' as status;
+SELECT viewname 
+FROM pg_views 
+WHERE schemaname = 'public'
+AND viewname LIKE 'vw_%'
+ORDER BY viewname;
+
+-- Funções criadas
+SELECT 'FUNÇÕES CRIADAS:' as status;
+SELECT proname 
+FROM pg_proc 
+WHERE pronamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+AND proname IN ('check_patient_limit', 'enforce_patient_limit', 'update_prescription_status', 'process_order_stock', 'update_updated_at_column')
+ORDER BY proname;
+
+-- Usuário admin
+SELECT 'USUÁRIO ADMIN:' as status;
+SELECT email, role, is_active 
+FROM users 
+WHERE email = 'admin@cannacare.com';
+
+-- ================================================================
+-- 29. DADOS DE LOGIN
+-- ================================================================
+SELECT '===================================================' as;
+SELECT 'EMAIL: admin@cannacare.com' as;
+SELECT 'SENHA: admin123' as;
+SELECT '===================================================' as;
