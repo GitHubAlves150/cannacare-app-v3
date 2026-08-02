@@ -383,8 +383,16 @@ Principais Aprendizados
 Comandos Úteis
 bash
 
+
+"
+
+🌿 CannaCare - Multi-Tenancy Testado e Aprovado!
+
+```
+
 # Recriar usuário admin padrão
-docker exec -it cannacare_postgres psql -U postgres -d cannacare_db -c "
+
+```bash
 INSERT INTO associations (id, name, cnpj, email, plan, status, patient_limit)
 VALUES (gen_random_uuid(), 'CannaCare Admin', '00.000.000/0001-00', 'admin@cannacare.com', 'enterprise', 'active', 999999)
 ON CONFLICT (email) DO NOTHING;
@@ -394,8 +402,5 @@ SELECT gen_random_uuid(), a.id, 'Administrador', 'admin@cannacare.com',
 '$2a$10$K8WrxL5rXB3p.OqM9zl5aeZ5EoW7JjLtYq2xNO6hVZ.SZ9y5Xb4bW', 'admin'
 FROM associations a WHERE a.email = 'admin@cannacare.com'
 ON CONFLICT (email, association_id) DO NOTHING;
-"
 
-🌿 CannaCare - Multi-Tenancy Testado e Aprovado!
-
-```
+``` 

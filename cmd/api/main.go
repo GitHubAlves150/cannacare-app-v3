@@ -2,7 +2,7 @@
 // CANNACARE - MAIN (PONTO DE ENTRADA)
 // ================================================================
 // Este é o arquivo principal que inicia a aplicação.
-// 
+//
 // RESPONSABILIDADES:
 //   1. Carregar configurações do .env
 //   2. Conectar ao banco de dados (PostgreSQL)
@@ -65,7 +65,7 @@ func main() {
 	// PASSO 5: Inicializar SERVICES (COM MIGRAÇÃO)
 	// ================================================================
 	log.Println("⚙️  Inicializando serviços...")
-	
+
 	// --- Serviços de autenticação ---
 	authService := services.NewAuthService(database.DB, jwtService)
 
@@ -82,11 +82,19 @@ func main() {
 	dashboardService := services.NewDashboardService(database.DB)
 	documentService := services.NewDocumentService(database.DB)
 
+	// Junto dos outros services (perto de patientService, doctorService...)
+	userService := services.NewUserService(database.DB)
+	emailService := services.NewEmailService()
+	paymentService := services.NewPaymentService()
+	onboardingService := services.NewOnboardingService(database.DB, emailService, paymentService)
+
 	// ================================================================
 	// PASSO 6: Inicializar HANDLERS
 	// ================================================================
 	log.Println("🎯 Inicializando handlers...")
-	
+	// Junto dos outros handlers
+	userHandler := handlers.NewAdminUserHandler(userService)
+
 	authHandler := handlers.NewAuthHandler(authService)
 	patientHandler := handlers.NewPatientHandler(patientService)
 	doctorHandler := handlers.NewDoctorHandler(doctorService)
@@ -98,7 +106,7 @@ func main() {
 	financialHandler := handlers.NewFinancialHandler(financialService)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
 	documentHandler := handlers.NewDocumentHandler(documentService)
-
+	publicHandler := handlers.NewPublicHandler(onboardingService)
 	// ================================================================
 	// PASSO 7: Configurar ROTAS
 	// ================================================================
@@ -125,6 +133,7 @@ func main() {
 
 	// --- Rotas protegidas ---
 	r.Group(func(r chi.Router) {
+
 		// ⚠️ Aplica o middleware de autenticação em TODAS as rotas abaixo
 		r.Use(middleware.AuthMiddleware(jwtService))
 
@@ -136,10 +145,10 @@ func main() {
 			associationID := r.Context().Value(middleware.AssociationIDKey).(string)
 			role := r.Context().Value(middleware.UserRoleKey).(string)
 			utils.SendSuccess(w, http.StatusOK, map[string]string{
-				"message":       "✅ Você está autenticado!",
-				"user_id":       userID,
+				"message":        "✅ Você está autenticado!",
+				"user_id":        userID,
 				"association_id": associationID,
-				"role":          role,
+				"role":           role,
 			})
 		})
 
@@ -282,6 +291,13 @@ func main() {
 			r.Get("/api/dashboard/low-stock", dashboardHandler.GetLowStock)
 		})
 
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RoleMiddleware("admin"))
+			r.Get("/api/admin/users", userHandler.List)
+			r.Post("/api/admin/users", userHandler.Create)
+			r.Patch("/api/admin/users/{id}/role", userHandler.UpdateRole)
+			r.Patch("/api/admin/users/{id}/status", userHandler.ToggleStatus)
+		})
 		// ================================================================
 		// ADMIN ONLY
 		// ================================================================
@@ -294,7 +310,11 @@ func main() {
 			})
 		})
 	})
-
+	r.Post("/api/public/associations", publicHandler.CreateAssociation)
+	r.Post("/api/public/associations", publicHandler.CreateAssociation)
+	r.Get("/api/public/invite/{token}", publicHandler.ValidateInvite)
+	r.Post("/api/public/invite/{token}", publicHandler.RedeemInvite)
+	r.Post("/api/public/billing/webhook/mercadopago", publicHandler.MercadoPagoWebhook)
 	// ================================================================
 	// PASSO 8: Iniciar servidor
 	// ================================================================

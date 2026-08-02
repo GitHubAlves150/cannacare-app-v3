@@ -403,11 +403,12 @@ func (s *PatientService) UpdateStatus(associationID uuid.UUID, id uuid.UUID, req
 
 	// --- PASSO 3: Registrar histórico de status ---
 	history := &models.PatientStatusHistory{
-		PatientID: patient.ID,
-		ChangedBy: &userID,
-		OldStatus: patient.Status,
-		NewStatus: req.Status,
-		Reason:    req.Reason,
+		AssociationID: associationID, // ← ESSENCIAL!
+		PatientID:     patient.ID,
+		ChangedBy:     &userID,
+		OldStatus:     patient.Status,
+		NewStatus:     req.Status,
+		Reason:        req.Reason,
 	}
 
 	if err := s.db.Create(history).Error; err != nil {

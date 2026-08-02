@@ -49,26 +49,28 @@ func NewDocumentHandler(documentService *services.DocumentService) *DocumentHand
 }
 
 // ================================================================
-// HANDLER: UPLOAD
+// HANDLER: UPLOAD - CORRIGIDO COM ASSOCIATION_ID
 // ================================================================
-// Endpoint: POST /api/patients/{id}/documents
-//
-// # Upload de um documento para o paciente
-//
-// EXEMPLO DE REQUISIÇÃO (multipart/form-data):
-//   - document_type: rg_cpf
-//   - file: arquivo.pdf ou imagem.jpg
 func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
-	// --- 1. Extrair ID do paciente da URL ---
+	// --- 1. Extrair association_id do Context ---
+	associationIDStr := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+	associationID, err := uuid.Parse(associationIDStr)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+
+	// --- 2. Extrair patient_id da URL ---
 	patientIDStr := chi.URLParam(r, "id")
 	patientID, err := uuid.Parse(patientIDStr)
 	if err != nil {
 		utils.SendError(w, http.StatusBadRequest, "ID do paciente inválido")
 		return
 	}
-
-	// --- 2. Verificar se o paciente existe ---
-	// (será verificado no service)
 
 	// --- 3. Extrair document_type do form ---
 	documentType := r.FormValue("document_type")
@@ -89,7 +91,7 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// --- 5. Obter ID do usuário que está fazendo o upload ---
+	// --- 5. Obter ID do usuário ---
 	userIDStr := r.Context().Value(middleware.UserIDKey).(string)
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
@@ -97,15 +99,14 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 6. Chamar serviço para upload ---
-	document, err := h.documentService.Upload(patientID, documentType, file, fileHeader, userID)
+	// --- 6. Chamar serviço (passando association_id) ---
+	document, err := h.documentService.Upload(associationID, patientID, documentType, file, fileHeader, userID)
 	if err != nil {
 		log.Printf("❌ Erro ao fazer upload: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// --- 7. Retornar sucesso ---
 	utils.SendSuccess(w, http.StatusCreated, document)
 }
 

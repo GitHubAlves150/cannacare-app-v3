@@ -1,19 +1,6 @@
 // ================================================================
 // PACOTE HANDLERS - STOCK HANDLER
 // ================================================================
-// Camada HTTP que lida com as requisições de estoque.
-//
-// ENDPOINTS:
-//   POST   /api/stock/lots           - Criar lote
-//   GET    /api/stock/lots           - Listar lotes (filtros)
-//   GET    /api/stock/lots/{id}      - Buscar lote por ID
-//   POST   /api/stock/adjust         - Ajustar estoque manualmente
-//   GET    /api/stock/movements      - Listar movimentações
-//   GET    /api/stock/expiring       - Lotes com validade próxima
-//   GET    /api/stock/low-stock      - Produtos com estoque baixo
-//   GET    /api/stock/summary        - Resumo de estoque
-// ================================================================
-
 package handlers
 
 import (
@@ -31,17 +18,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ================================================================
-// STRUCT STOCKHANDLER
-// ================================================================
 type StockHandler struct {
 	stockService *services.StockService
 	validator    *validator.Validate
 }
 
-// ================================================================
-// FUNÇÃO NEWSTOCKHANDLER()
-// ================================================================
 func NewStockHandler(stockService *services.StockService) *StockHandler {
 	return &StockHandler{
 		stockService: stockService,
@@ -49,18 +30,27 @@ func NewStockHandler(stockService *services.StockService) *StockHandler {
 	}
 }
 
-// ================================================================
-// HANDLER: CREATE LOT
-// ================================================================
-// Endpoint: POST /api/stock/lots
-func (h *StockHandler) CreateLot(w http.ResponseWriter, r *http.Request) {
-	var req services.CreateLotRequest
+func (h *StockHandler) extractAssociationID(r *http.Request) (uuid.UUID, error) {
+	associationIDStr, _ := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(associationIDStr)
+}
 
+// POST /api/stock/lots
+func (h *StockHandler) CreateLot(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	var req services.CreateLotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
@@ -73,7 +63,7 @@ func (h *StockHandler) CreateLot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lot, err := h.stockService.CreateLot(req, userID)
+	lot, err := h.stockService.CreateLot(associationID, req, userID)
 	if err != nil {
 		log.Printf("❌ Erro ao criar lote: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
@@ -83,11 +73,14 @@ func (h *StockHandler) CreateLot(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusCreated, lot)
 }
 
-// ================================================================
-// HANDLER: GET LOT BY ID
-// ================================================================
-// Endpoint: GET /api/stock/lots/{id}
+// GET /api/stock/lots/{id}
 func (h *StockHandler) GetLotByID(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -95,7 +88,7 @@ func (h *StockHandler) GetLotByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lot, err := h.stockService.GetLotByID(id)
+	lot, err := h.stockService.GetLotByID(associationID, id)
 	if err != nil {
 		if err.Error() == "lote não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -109,11 +102,14 @@ func (h *StockHandler) GetLotByID(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, lot)
 }
 
-// ================================================================
-// HANDLER: LIST LOTS
-// ================================================================
-// Endpoint: GET /api/stock/lots
+// GET /api/stock/lots
 func (h *StockHandler) ListLots(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	req := services.ListLotRequest{
 		ProductID: r.URL.Query().Get("product_id"),
 	}
@@ -124,7 +120,6 @@ func (h *StockHandler) ListLots(w http.ResponseWriter, r *http.Request) {
 			req.IsExpired = &isExpired
 		}
 	}
-
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, err := strconv.Atoi(pageStr)
 		if err == nil {
@@ -138,7 +133,7 @@ func (h *StockHandler) ListLots(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	lots, total, err := h.stockService.ListLots(req)
+	lots, total, err := h.stockService.ListLots(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao listar lotes: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar lotes")
@@ -153,18 +148,19 @@ func (h *StockHandler) ListLots(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: ADJUST STOCK
-// ================================================================
-// Endpoint: POST /api/stock/adjust
+// POST /api/stock/adjust
 func (h *StockHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
-	var req services.StockAdjustRequest
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
 
+	var req services.StockAdjustRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
@@ -177,7 +173,7 @@ func (h *StockHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	movement, err := h.stockService.AdjustStock(req, userID)
+	movement, err := h.stockService.AdjustStock(associationID, req, userID)
 	if err != nil {
 		log.Printf("❌ Erro ao ajustar estoque: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
@@ -187,11 +183,14 @@ func (h *StockHandler) AdjustStock(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, movement)
 }
 
-// ================================================================
-// HANDLER: GET MOVEMENTS
-// ================================================================
-// Endpoint: GET /api/stock/movements
+// GET /api/stock/movements
 func (h *StockHandler) GetMovements(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	req := services.ListMovementRequest{
 		ProductLotID: r.URL.Query().Get("product_lot_id"),
 		Type:         r.URL.Query().Get("type"),
@@ -210,7 +209,7 @@ func (h *StockHandler) GetMovements(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	movements, total, err := h.stockService.GetMovements(req)
+	movements, total, err := h.stockService.GetMovements(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao listar movimentações: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar movimentações")
@@ -225,12 +224,15 @@ func (h *StockHandler) GetMovements(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: GET EXPIRING LOTS
-// ================================================================
-// Endpoint: GET /api/stock/expiring
+// GET /api/stock/expiring
 func (h *StockHandler) GetExpiringLots(w http.ResponseWriter, r *http.Request) {
-	lots, err := h.stockService.GetExpiringLots()
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	lots, err := h.stockService.GetExpiringLots(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar lotes com validade próxima: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar lotes com validade próxima")
@@ -240,12 +242,15 @@ func (h *StockHandler) GetExpiringLots(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, lots)
 }
 
-// ================================================================
-// HANDLER: GET LOW STOCK
-// ================================================================
-// Endpoint: GET /api/stock/low-stock
+// GET /api/stock/low-stock
 func (h *StockHandler) GetLowStock(w http.ResponseWriter, r *http.Request) {
-	products, err := h.stockService.GetLowStock()
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	products, err := h.stockService.GetLowStock(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar produtos com estoque baixo: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar produtos com estoque baixo")
@@ -255,12 +260,15 @@ func (h *StockHandler) GetLowStock(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, products)
 }
 
-// ================================================================
-// HANDLER: GET STOCK SUMMARY
-// ================================================================
-// Endpoint: GET /api/stock/summary
+// GET /api/stock/summary
 func (h *StockHandler) GetStockSummary(w http.ResponseWriter, r *http.Request) {
-	summary, err := h.stockService.GetStockSummary()
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	summary, err := h.stockService.GetStockSummary(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar resumo de estoque: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar resumo de estoque")

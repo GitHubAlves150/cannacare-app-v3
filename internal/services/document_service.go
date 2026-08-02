@@ -89,22 +89,9 @@ type UpdateDocumentStatusRequest struct {
 }
 
 // ================================================================
-// FUNÇÃO UPLOAD()
+// FUNÇÃO UPLOAD - CORRIGIDA COM ASSOCIATION_ID
 // ================================================================
-// Faz o upload de um documento para um paciente
-//
-// PARÂMETROS:
-//
-//	patientID    - ID do paciente
-//	documentType - Tipo do documento (rg_cpf, comprovante_residencia, etc)
-//	file         - Arquivo multipart
-//	userID       - ID do usuário que está fazendo o upload
-//
-// RETORNO:
-//
-//	*DocumentResponse - Dados do documento salvo
-//	error             - Erro se houver falha
-func (s *DocumentService) Upload(patientID uuid.UUID, documentType string, file multipart.File, fileHeader *multipart.FileHeader, userID uuid.UUID) (*DocumentResponse, error) {
+func (s *DocumentService) Upload(associationID uuid.UUID, patientID uuid.UUID, documentType string, file multipart.File, fileHeader *multipart.FileHeader, userID uuid.UUID) (*DocumentResponse, error) {
 	// --- 1. Validar tipo de documento ---
 	if !s.isValidDocumentType(documentType) {
 		return nil, fmt.Errorf("tipo de documento inválido: %s", documentType)
@@ -124,16 +111,15 @@ func (s *DocumentService) Upload(patientID uuid.UUID, documentType string, file 
 	if !s.isAllowedMimeType(mimeType) {
 		return nil, fmt.Errorf("tipo de arquivo não permitido: %s", mimeType)
 	}
-	// Resetar o arquivo para ler do início novamente
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 
-	// --- 4. Verificar se o paciente existe ---
+	// --- 4. Verificar se o paciente existe E pertence à associação ---
 	var patient models.Patient
-	if err := s.db.Where("id = ?", patientID).First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", patientID, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("paciente não encontrado")
+			return nil, errors.New("paciente não encontrado ou não pertence à sua associação")
 		}
 		return nil, err
 	}
@@ -141,7 +127,6 @@ func (s *DocumentService) Upload(patientID uuid.UUID, documentType string, file 
 	// --- 5. Gerar nome único para o arquivo ---
 	extension := filepath.Ext(fileHeader.Filename)
 	if extension == "" {
-		// Se não tiver extensão, usa a extensão do MIME type
 		ext := getExtensionFromMime(mimeType)
 		extension = "." + ext
 	}
@@ -151,41 +136,36 @@ func (s *DocumentService) Upload(patientID uuid.UUID, documentType string, file 
 		time.Now().Unix(),
 		extension,
 	)
-
-	// Caminho completo onde o arquivo será salvo
 	fullPath := filepath.Join(s.uploadPath, filename)
 
 	// --- 6. Salvar o arquivo no disco ---
-	// Criar o diretório se não existir
 	if err := os.MkdirAll(s.uploadPath, 0755); err != nil {
 		return nil, err
 	}
 
-	// Criar arquivo destino
 	dst, err := os.Create(fullPath)
 	if err != nil {
 		return nil, err
 	}
 	defer dst.Close()
 
-	// Copiar conteúdo
 	if _, err := io.Copy(dst, file); err != nil {
 		return nil, err
 	}
 
-	// --- 7. Criar registro no banco ---
+	// --- 7. Criar registro no banco (COM association_id) ---
 	document := &models.PatientDocument{
-		PatientID:    patientID,
-		DocumentType: documentType,
-		FileURL:      fmt.Sprintf("/uploads/documents/%s", filename),
-		FileName:     fileHeader.Filename,
-		FileSize:     fileHeader.Size,
-		MimeType:     mimeType,
-		Status:       "em_analise",
+		AssociationID: associationID, // ← ⚠️ ESSENCIAL!
+		PatientID:     patientID,
+		DocumentType:  documentType,
+		FileURL:       fmt.Sprintf("/uploads/documents/%s", filename),
+		FileName:      fileHeader.Filename,
+		FileSize:      fileHeader.Size,
+		MimeType:      mimeType,
+		Status:        "em_analise",
 	}
 
 	if err := s.db.Create(document).Error; err != nil {
-		// Se falhar ao salvar no banco, remover o arquivo
 		os.Remove(fullPath)
 		return nil, err
 	}

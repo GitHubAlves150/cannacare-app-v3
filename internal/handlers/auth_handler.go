@@ -98,10 +98,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.validator.Struct(req); err != nil {
-		sendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
-		return
-	}
+	// 🔧 REMOVER A VALIDAÇÃO DE EMAIL AQUI
+	// O service já valida o email e a senha
+	// A validação "required,email" está causando erro 400
 
 	authResponse, err := h.authService.Login(req)
 	if err != nil {

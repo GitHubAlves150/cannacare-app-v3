@@ -1,15 +1,9 @@
 // ================================================================
 // PACOTE SERVICES - PRESCRIPTION SERVICE
 // ================================================================
-// Camada de serviço responsável pela gestão de prescrições/receitas.
-//
-// RESPONSABILIDADES:
-// 1. CRUD completo de prescrições
-// 2. Validação de receitas (datas, médico, paciente, produtos)
-// 3. Alertas de vencimento (15 dias antes)
-// 4. Controle de status (valida, proxima_vencer, vencida)
-// 5. Validação para novos pedidos (receita válida)
-// 6. Itens da receita (medicamentos e dosagens)
+// ⚠️ CORRIGIDO: Create() não recebia nem setava associationID, mesmo
+// o model Prescription já tendo o campo. Os itens (PrescriptionItem)
+// também precisam do campo agora.
 // ================================================================
 
 package services
@@ -25,27 +19,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// ================================================================
-// STRUCT PRESCRIPTIONSERVICE
-// ================================================================
 type PrescriptionService struct {
 	db *gorm.DB
 }
 
-// ================================================================
-// FUNÇÃO NEWPRESCRIPTIONSERVICE()
-// ================================================================
 func NewPrescriptionService(db *gorm.DB) *PrescriptionService {
-	return &PrescriptionService{
-		db: db,
-	}
+	return &PrescriptionService{db: db}
 }
 
-// ================================================================
-// STRUCTS PARA REQUISIÇÕES E RESPOSTAS
-// ================================================================
-
-// CreatePrescriptionRequest - Dados para criar uma nova prescrição
 type CreatePrescriptionRequest struct {
 	PatientID      string                          `json:"patient_id" validate:"required"`
 	DoctorID       string                          `json:"doctor_id" validate:"required"`
@@ -55,14 +36,12 @@ type CreatePrescriptionRequest struct {
 	Items          []CreatePrescriptionItemRequest `json:"items" validate:"required,min=1"`
 }
 
-// CreatePrescriptionItemRequest - Item da prescrição
 type CreatePrescriptionItemRequest struct {
 	ProductID           string `json:"product_id" validate:"required"`
 	DosageInstructions  string `json:"dosage_instructions" validate:"required"`
 	QuantityRecommended int    `json:"quantity_recommended" validate:"required,min=1"`
 }
 
-// UpdatePrescriptionRequest - Dados para atualizar uma prescrição
 type UpdatePrescriptionRequest struct {
 	CID            string    `json:"cid" validate:"omitempty"`
 	IssueDate      time.Time `json:"issue_date" validate:"omitempty"`
@@ -70,7 +49,6 @@ type UpdatePrescriptionRequest struct {
 	IsActive       *bool     `json:"is_active" validate:"omitempty"`
 }
 
-// PrescriptionResponse - Resposta com dados da prescrição
 type PrescriptionResponse struct {
 	ID              string                     `json:"id"`
 	PatientID       string                     `json:"patient_id"`
@@ -88,7 +66,6 @@ type PrescriptionResponse struct {
 	UpdatedAt       string                     `json:"updated_at"`
 }
 
-// PrescriptionItemResponse - Item da prescrição
 type PrescriptionItemResponse struct {
 	ID                  string `json:"id"`
 	ProductID           string `json:"product_id"`
@@ -97,7 +74,6 @@ type PrescriptionItemResponse struct {
 	QuantityRecommended int    `json:"quantity_recommended"`
 }
 
-// ListPrescriptionRequest - Filtros para listagem
 type ListPrescriptionRequest struct {
 	PatientID string `json:"patient_id" query:"patient_id"`
 	DoctorID  string `json:"doctor_id" query:"doctor_id"`
@@ -107,7 +83,6 @@ type ListPrescriptionRequest struct {
 	Limit     int    `json:"limit" query:"limit"`
 }
 
-// ValidatePrescriptionResult - Resultado da validação de receita
 type ValidatePrescriptionResult struct {
 	IsValid        bool   `json:"is_valid"`
 	PrescriptionID string `json:"prescription_id,omitempty"`
@@ -117,8 +92,7 @@ type ValidatePrescriptionResult struct {
 // ================================================================
 // FUNÇÃO CREATE()
 // ================================================================
-// Cria uma nova prescrição com seus itens
-func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*PrescriptionResponse, error) {
+func (s *PrescriptionService) Create(associationID uuid.UUID, req CreatePrescriptionRequest) (*PrescriptionResponse, error) {
 	// --- 1. Validar datas ---
 	if req.ExpirationDate.Before(req.IssueDate) {
 		return nil, errors.New("data de validade não pode ser anterior à data de emissão")
@@ -127,13 +101,13 @@ func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*Prescripti
 		return nil, errors.New("data de emissão não pode ser futura")
 	}
 
-	// --- 2. Validar paciente ---
+	// --- 2. Validar paciente (DENTRO da associação) ---
 	patientID, err := uuid.Parse(req.PatientID)
 	if err != nil {
 		return nil, fmt.Errorf("ID do paciente inválido: %w", err)
 	}
 	var patient models.Patient
-	if err := s.db.Where("id = ?", patientID).First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", patientID, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("paciente não encontrado")
 		}
@@ -143,20 +117,20 @@ func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*Prescripti
 		return nil, errors.New("paciente não está aprovado")
 	}
 
-	// --- 3. Validar médico ---
+	// --- 3. Validar médico (DENTRO da associação) ---
 	doctorID, err := uuid.Parse(req.DoctorID)
 	if err != nil {
 		return nil, fmt.Errorf("ID do médico inválido: %w", err)
 	}
 	var doctor models.Doctor
-	if err := s.db.Where("id = ? AND is_active = ?", doctorID, true).First(&doctor).Error; err != nil {
+	if err := s.db.Where("id = ? AND is_active = ? AND association_id = ?", doctorID, true, associationID).First(&doctor).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("médico não encontrado ou inativo")
 		}
 		return nil, err
 	}
 
-	// --- 4. Validar produtos e criar prescrição ---
+	// --- 4. Validar produtos (DENTRO da associação) e criar itens ---
 	var items []models.PrescriptionItem
 	var productIDs []uuid.UUID
 
@@ -168,15 +142,15 @@ func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*Prescripti
 		productIDs = append(productIDs, productID)
 
 		items = append(items, models.PrescriptionItem{
-			ProductID:           productID,
-			DosageInstructions:  item.DosageInstructions,
-			QuantityRecommended: item.QuantityRecommended,
+			AssociationID:        associationID, // ← ESSENCIAL!
+			ProductID:            productID,
+			DosageInstructions:   item.DosageInstructions,
+			QuantityRecommended:  item.QuantityRecommended,
 		})
 	}
 
-	// Verificar se todos os produtos existem
 	var products []models.Product
-	if err := s.db.Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+	if err := s.db.Where("id IN ? AND association_id = ?", productIDs, associationID).Find(&products).Error; err != nil {
 		return nil, err
 	}
 	if len(products) != len(productIDs) {
@@ -193,6 +167,7 @@ func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*Prescripti
 
 	// --- 6. Criar a prescrição ---
 	prescription := &models.Prescription{
+		AssociationID:  associationID, // ← ESSENCIAL!
 		PatientID:      patientID,
 		DoctorID:       doctorID,
 		CID:            req.CID,
@@ -207,18 +182,16 @@ func (s *PrescriptionService) Create(req CreatePrescriptionRequest) (*Prescripti
 		return nil, err
 	}
 
-	// --- 7. Retornar resposta ---
 	return s.toPrescriptionResponse(prescription), nil
 }
 
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-// Busca uma prescrição pelo ID
-func (s *PrescriptionService) GetByID(id uuid.UUID) (*PrescriptionResponse, error) {
+func (s *PrescriptionService) GetByID(associationID, id uuid.UUID) (*PrescriptionResponse, error) {
 	var prescription models.Prescription
 	if err := s.db.Preload("Items").Preload("Items.Product").Preload("Patient").Preload("Doctor").
-		Where("id = ?", id).First(&prescription).Error; err != nil {
+		Where("id = ? AND association_id = ?", id, associationID).First(&prescription).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("prescrição não encontrada")
 		}
@@ -230,9 +203,7 @@ func (s *PrescriptionService) GetByID(id uuid.UUID) (*PrescriptionResponse, erro
 // ================================================================
 // FUNÇÃO LIST()
 // ================================================================
-// Lista prescrições com filtros e paginação
-func (s *PrescriptionService) List(req ListPrescriptionRequest) ([]PrescriptionResponse, int64, error) {
-	// --- 1. Definir paginação ---
+func (s *PrescriptionService) List(associationID uuid.UUID, req ListPrescriptionRequest) ([]PrescriptionResponse, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -241,8 +212,7 @@ func (s *PrescriptionService) List(req ListPrescriptionRequest) ([]PrescriptionR
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir query ---
-	query := s.db.Model(&models.Prescription{})
+	query := s.db.Model(&models.Prescription{}).Where("association_id = ?", associationID)
 
 	if req.PatientID != "" {
 		patientID, err := uuid.Parse(req.PatientID)
@@ -265,20 +235,17 @@ func (s *PrescriptionService) List(req ListPrescriptionRequest) ([]PrescriptionR
 		query = query.Where("is_active = ?", *req.IsActive)
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var prescriptions []models.Prescription
 	if err := query.Preload("Items").Preload("Items.Product").Preload("Patient").Preload("Doctor").
 		Offset(offset).Limit(req.Limit).Order("created_at DESC").Find(&prescriptions).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []PrescriptionResponse
 	for _, p := range prescriptions {
 		responses = append(responses, *s.toPrescriptionResponse(&p))
@@ -290,17 +257,15 @@ func (s *PrescriptionService) List(req ListPrescriptionRequest) ([]PrescriptionR
 // ================================================================
 // FUNÇÃO UPDATE()
 // ================================================================
-// Atualiza os dados de uma prescrição
-func (s *PrescriptionService) Update(id uuid.UUID, req UpdatePrescriptionRequest) (*PrescriptionResponse, error) {
+func (s *PrescriptionService) Update(associationID, id uuid.UUID, req UpdatePrescriptionRequest) (*PrescriptionResponse, error) {
 	var prescription models.Prescription
-	if err := s.db.Where("id = ?", id).First(&prescription).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&prescription).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("prescrição não encontrada")
 		}
 		return nil, err
 	}
 
-	// --- 1. Atualizar campos ---
 	if req.CID != "" {
 		prescription.CID = req.CID
 	}
@@ -320,7 +285,6 @@ func (s *PrescriptionService) Update(id uuid.UUID, req UpdatePrescriptionRequest
 		prescription.IsActive = *req.IsActive
 	}
 
-	// --- 2. Atualizar status automaticamente ---
 	if req.ExpirationDate.IsZero() {
 		s.updateStatus(&prescription)
 	} else {
@@ -337,9 +301,8 @@ func (s *PrescriptionService) Update(id uuid.UUID, req UpdatePrescriptionRequest
 		return nil, err
 	}
 
-	// --- 3. Carregar relacionamentos ---
 	if err := s.db.Preload("Items").Preload("Items.Product").Preload("Patient").Preload("Doctor").
-		First(&prescription, id).Error; err != nil {
+		Where("association_id = ?", associationID).First(&prescription, id).Error; err != nil {
 		return nil, err
 	}
 
@@ -349,9 +312,8 @@ func (s *PrescriptionService) Update(id uuid.UUID, req UpdatePrescriptionRequest
 // ================================================================
 // FUNÇÃO DELETE()
 // ================================================================
-// Remove uma prescrição (soft delete)
-func (s *PrescriptionService) Delete(id uuid.UUID) error {
-	result := s.db.Delete(&models.Prescription{}, "id = ?", id)
+func (s *PrescriptionService) Delete(associationID, id uuid.UUID) error {
+	result := s.db.Where("association_id = ?", associationID).Delete(&models.Prescription{}, "id = ?", id)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -364,29 +326,19 @@ func (s *PrescriptionService) Delete(id uuid.UUID) error {
 // ================================================================
 // FUNÇÃO VALIDATE()
 // ================================================================
-// Valida se uma prescrição é válida para um novo pedido
-// Verifica: existe, ativa, não vencida, paciente aprovado
-func (s *PrescriptionService) Validate(prescriptionID uuid.UUID) (*ValidatePrescriptionResult, error) {
+func (s *PrescriptionService) Validate(associationID, prescriptionID uuid.UUID) (*ValidatePrescriptionResult, error) {
 	var prescription models.Prescription
-	if err := s.db.Where("id = ?", prescriptionID).First(&prescription).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", prescriptionID, associationID).First(&prescription).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return &ValidatePrescriptionResult{
-				IsValid: false,
-				Message: "prescrição não encontrada",
-			}, nil
+			return &ValidatePrescriptionResult{IsValid: false, Message: "prescrição não encontrada"}, nil
 		}
 		return nil, err
 	}
 
-	// Verificar se está ativa
 	if !prescription.IsActive {
-		return &ValidatePrescriptionResult{
-			IsValid: false,
-			Message: "prescrição inativa",
-		}, nil
+		return &ValidatePrescriptionResult{IsValid: false, Message: "prescrição inativa"}, nil
 	}
 
-	// Verificar se está vencida
 	if prescription.Status == "vencida" {
 		return &ValidatePrescriptionResult{
 			IsValid: false,
@@ -394,26 +346,18 @@ func (s *PrescriptionService) Validate(prescriptionID uuid.UUID) (*ValidatePresc
 		}, nil
 	}
 
-	// Verificar se o paciente está ativo
 	var patient models.Patient
-	if err := s.db.Where("id = ?", prescription.PatientID).First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", prescription.PatientID, associationID).First(&patient).Error; err != nil {
 		return nil, err
 	}
 	if patient.Status != "aprovado" {
-		return &ValidatePrescriptionResult{
-			IsValid: false,
-			Message: "paciente não está aprovado",
-		}, nil
+		return &ValidatePrescriptionResult{IsValid: false, Message: "paciente não está aprovado"}, nil
 	}
 
-	// Verificar se o médico está ativo
 	var doctor models.Doctor
-	if err := s.db.Where("id = ? AND is_active = ?", prescription.DoctorID, true).First(&doctor).Error; err != nil {
+	if err := s.db.Where("id = ? AND is_active = ? AND association_id = ?", prescription.DoctorID, true, associationID).First(&doctor).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return &ValidatePrescriptionResult{
-				IsValid: false,
-				Message: "médico não está ativo",
-			}, nil
+			return &ValidatePrescriptionResult{IsValid: false, Message: "médico não está ativo"}, nil
 		}
 		return nil, err
 	}
@@ -428,10 +372,9 @@ func (s *PrescriptionService) Validate(prescriptionID uuid.UUID) (*ValidatePresc
 // ================================================================
 // FUNÇÃO GETEXPIRED()
 // ================================================================
-// Retorna prescrições vencidas (usando view)
-func (s *PrescriptionService) GetExpired() ([]map[string]interface{}, error) {
+func (s *PrescriptionService) GetExpired(associationID uuid.UUID) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := s.db.Table("vw_expired_prescriptions").Find(&results).Error
+	err := s.db.Table("vw_expired_prescriptions").Where("association_id = ?", associationID).Find(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -439,9 +382,8 @@ func (s *PrescriptionService) GetExpired() ([]map[string]interface{}, error) {
 }
 
 // ================================================================
-// FUNÇÃO UPDATEALLSTATUS()
+// FUNÇÃO UPDATEALLSTATUS() - job diário, roda para TODAS as associações
 // ================================================================
-// Atualiza o status de todas as prescrições (job diário)
 func (s *PrescriptionService) UpdateAllStatus() error {
 	var prescriptions []models.Prescription
 	if err := s.db.Where("is_active = ?", true).Find(&prescriptions).Error; err != nil {
@@ -460,8 +402,6 @@ func (s *PrescriptionService) UpdateAllStatus() error {
 // ================================================================
 // FUNÇÕES AUXILIARES
 // ================================================================
-
-// updateStatus - Atualiza o status da prescrição baseado na data de validade
 func (s *PrescriptionService) updateStatus(p *models.Prescription) {
 	now := time.Now()
 	if p.ExpirationDate.Before(now) {
@@ -474,9 +414,7 @@ func (s *PrescriptionService) updateStatus(p *models.Prescription) {
 	}
 }
 
-// toPrescriptionResponse - Converte models.Prescription para PrescriptionResponse
 func (s *PrescriptionService) toPrescriptionResponse(p *models.Prescription) *PrescriptionResponse {
-	// Calcular dias até vencer
 	daysUntilExpire := int(p.ExpirationDate.Sub(time.Now()).Hours() / 24)
 	if daysUntilExpire < 0 {
 		daysUntilExpire = 0
@@ -485,7 +423,7 @@ func (s *PrescriptionService) toPrescriptionResponse(p *models.Prescription) *Pr
 	items := []PrescriptionItemResponse{}
 	for _, item := range p.Items {
 		productName := ""
-		if item.Product.ID != uuid.Nil {
+		if item.Product != nil && item.Product.ID != uuid.Nil {
 			productName = item.Product.Name
 		}
 		items = append(items, PrescriptionItemResponse{
@@ -498,11 +436,11 @@ func (s *PrescriptionService) toPrescriptionResponse(p *models.Prescription) *Pr
 	}
 
 	patientName := ""
-	if p.Patient.ID != uuid.Nil {
+	if p.Patient != nil && p.Patient.ID != uuid.Nil {
 		patientName = p.Patient.FullName
 	}
 	doctorName := ""
-	if p.Doctor.ID != uuid.Nil {
+	if p.Doctor != nil && p.Doctor.ID != uuid.Nil {
 		doctorName = p.Doctor.Name
 	}
 

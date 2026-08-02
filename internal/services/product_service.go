@@ -1,14 +1,8 @@
 // ================================================================
 // PACOTE SERVICES - PRODUCT SERVICE
 // ================================================================
-// Camada de serviço responsável pela gestão de produtos.
-//
-// RESPONSABILIDADES:
-// 1. CRUD completo de produtos
-// 2. Validação de dados (nome, preço, estoque mínimo)
-// 3. Listagem com filtros e paginação
-// 4. Controle de ativação/desativação
-// 5. Busca por nome ou categoria
+// ⚠️ CORRIGIDO: Create() não recebia nem setava associationID.
+// Todas as funções agora recebem/filtram por associationID.
 // ================================================================
 
 package services
@@ -22,27 +16,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// ================================================================
-// STRUCT PRODUCTSERVICE
-// ================================================================
 type ProductService struct {
 	db *gorm.DB
 }
 
-// ================================================================
-// FUNÇÃO NEWPRODUCTSERVICE()
-// ================================================================
 func NewProductService(db *gorm.DB) *ProductService {
-	return &ProductService{
-		db: db,
-	}
+	return &ProductService{db: db}
 }
 
-// ================================================================
-// STRUCTS PARA REQUISIÇÕES E RESPOSTAS
-// ================================================================
-
-// CreateProductRequest - Dados para criar um novo produto
 type CreateProductRequest struct {
 	Name          string  `json:"name" validate:"required,min=3,max=200"`
 	Description   string  `json:"description" validate:"omitempty"`
@@ -50,7 +31,6 @@ type CreateProductRequest struct {
 	MinStockAlert int     `json:"min_stock_alert" validate:"omitempty,min=0"`
 }
 
-// UpdateProductRequest - Dados para atualizar um produto
 type UpdateProductRequest struct {
 	Name          string  `json:"name" validate:"omitempty,min=3,max=200"`
 	Description   string  `json:"description" validate:"omitempty"`
@@ -59,7 +39,6 @@ type UpdateProductRequest struct {
 	IsActive      *bool   `json:"is_active" validate:"omitempty"`
 }
 
-// ProductResponse - Resposta com dados do produto
 type ProductResponse struct {
 	ID            string  `json:"id"`
 	Name          string  `json:"name"`
@@ -71,7 +50,6 @@ type ProductResponse struct {
 	UpdatedAt     string  `json:"updated_at"`
 }
 
-// ListProductRequest - Filtros para listagem
 type ListProductRequest struct {
 	Name     string `json:"name" query:"name"`
 	IsActive *bool  `json:"is_active" query:"is_active"`
@@ -82,25 +60,23 @@ type ListProductRequest struct {
 // ================================================================
 // FUNÇÃO CREATE()
 // ================================================================
-// Cria um novo produto no sistema
-func (s *ProductService) Create(req CreateProductRequest) (*ProductResponse, error) {
-	// --- 1. Validar nome único ---
+func (s *ProductService) Create(associationID uuid.UUID, req CreateProductRequest) (*ProductResponse, error) {
+	// --- 1. Validar nome único DENTRO da associação ---
 	var existingProduct models.Product
-	err := s.db.Where("name = ?", req.Name).First(&existingProduct).Error
+	err := s.db.Where("name = ? AND association_id = ?", req.Name, associationID).First(&existingProduct).Error
 	if err == nil {
 		return nil, errors.New("produto com este nome já existe")
 	} else if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
 
-	// --- 2. Definir estoque mínimo padrão ---
 	minStockAlert := req.MinStockAlert
 	if minStockAlert == 0 {
 		minStockAlert = 10
 	}
 
-	// --- 3. Criar produto ---
 	product := &models.Product{
+		AssociationID: associationID, // ← ESSENCIAL!
 		Name:          req.Name,
 		Description:   req.Description,
 		UnitPrice:     req.UnitPrice,
@@ -118,10 +94,9 @@ func (s *ProductService) Create(req CreateProductRequest) (*ProductResponse, err
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-// Busca um produto pelo ID
-func (s *ProductService) GetByID(id uuid.UUID) (*ProductResponse, error) {
+func (s *ProductService) GetByID(associationID, id uuid.UUID) (*ProductResponse, error) {
 	var product models.Product
-	if err := s.db.Where("id = ?", id).First(&product).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&product).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("produto não encontrado")
 		}
@@ -133,9 +108,7 @@ func (s *ProductService) GetByID(id uuid.UUID) (*ProductResponse, error) {
 // ================================================================
 // FUNÇÃO LIST()
 // ================================================================
-// Lista produtos com filtros e paginação
-func (s *ProductService) List(req ListProductRequest) ([]ProductResponse, int64, error) {
-	// --- 1. Definir paginação ---
+func (s *ProductService) List(associationID uuid.UUID, req ListProductRequest) ([]ProductResponse, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -144,8 +117,7 @@ func (s *ProductService) List(req ListProductRequest) ([]ProductResponse, int64,
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir query ---
-	query := s.db.Model(&models.Product{})
+	query := s.db.Model(&models.Product{}).Where("association_id = ?", associationID)
 
 	if req.Name != "" {
 		query = query.Where("name ILIKE ?", "%"+req.Name+"%")
@@ -154,19 +126,16 @@ func (s *ProductService) List(req ListProductRequest) ([]ProductResponse, int64,
 		query = query.Where("is_active = ?", *req.IsActive)
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var products []models.Product
 	if err := query.Offset(offset).Limit(req.Limit).Order("name ASC").Find(&products).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []ProductResponse
 	for _, p := range products {
 		responses = append(responses, *toProductResponse(&p))
@@ -178,21 +147,18 @@ func (s *ProductService) List(req ListProductRequest) ([]ProductResponse, int64,
 // ================================================================
 // FUNÇÃO UPDATE()
 // ================================================================
-// Atualiza os dados de um produto
-func (s *ProductService) Update(id uuid.UUID, req UpdateProductRequest) (*ProductResponse, error) {
-	// --- 1. Buscar produto ---
+func (s *ProductService) Update(associationID, id uuid.UUID, req UpdateProductRequest) (*ProductResponse, error) {
 	var product models.Product
-	if err := s.db.Where("id = ?", id).First(&product).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&product).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("produto não encontrado")
 		}
 		return nil, err
 	}
 
-	// --- 2. Verificar nome duplicado (se for alterado) ---
 	if req.Name != "" && req.Name != product.Name {
 		var existingProduct models.Product
-		err := s.db.Where("name = ? AND id != ?", req.Name, id).First(&existingProduct).Error
+		err := s.db.Where("name = ? AND id != ? AND association_id = ?", req.Name, id, associationID).First(&existingProduct).Error
 		if err == nil {
 			return nil, errors.New("produto com este nome já existe")
 		} else if err != gorm.ErrRecordNotFound {
@@ -201,7 +167,6 @@ func (s *ProductService) Update(id uuid.UUID, req UpdateProductRequest) (*Produc
 		product.Name = req.Name
 	}
 
-	// --- 3. Atualizar campos ---
 	if req.Description != "" {
 		product.Description = req.Description
 	}
@@ -225,18 +190,18 @@ func (s *ProductService) Update(id uuid.UUID, req UpdateProductRequest) (*Produc
 // ================================================================
 // FUNÇÃO DELETE()
 // ================================================================
-// Remove um produto (soft delete)
-func (s *ProductService) Delete(id uuid.UUID) error {
-	// Verificar se o produto não está sendo usado em prescrições
+func (s *ProductService) Delete(associationID, id uuid.UUID) error {
 	var count int64
-	if err := s.db.Model(&models.PrescriptionItem{}).Where("product_id = ?", id).Count(&count).Error; err != nil {
+	if err := s.db.Model(&models.PrescriptionItem{}).
+		Where("product_id = ? AND association_id = ?", id, associationID).
+		Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
 		return errors.New("produto está sendo usado em prescrições, não pode ser removido")
 	}
 
-	result := s.db.Delete(&models.Product{}, "id = ?", id)
+	result := s.db.Where("association_id = ?", associationID).Delete(&models.Product{}, "id = ?", id)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -249,10 +214,9 @@ func (s *ProductService) Delete(id uuid.UUID) error {
 // ================================================================
 // FUNÇÃO GETLOWSTOCK()
 // ================================================================
-// Retorna produtos com estoque baixo (usando view)
-func (s *ProductService) GetLowStock() ([]map[string]interface{}, error) {
+func (s *ProductService) GetLowStock(associationID uuid.UUID) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := s.db.Table("vw_low_stock").Find(&results).Error
+	err := s.db.Table("vw_low_stock").Where("association_id = ?", associationID).Find(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -262,10 +226,9 @@ func (s *ProductService) GetLowStock() ([]map[string]interface{}, error) {
 // ================================================================
 // FUNÇÃO GETSTOCKSUMMARY()
 // ================================================================
-// Retorna resumo de estoque (usando view)
-func (s *ProductService) GetStockSummary() ([]map[string]interface{}, error) {
+func (s *ProductService) GetStockSummary(associationID uuid.UUID) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := s.db.Table("vw_stock_summary").Find(&results).Error
+	err := s.db.Table("vw_stock_summary").Where("association_id = ?", associationID).Find(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -275,8 +238,6 @@ func (s *ProductService) GetStockSummary() ([]map[string]interface{}, error) {
 // ================================================================
 // FUNÇÕES AUXILIARES
 // ================================================================
-
-// toProductResponse - Converte models.Product para ProductResponse
 func toProductResponse(product *models.Product) *ProductResponse {
 	return &ProductResponse{
 		ID:            product.ID.String(),

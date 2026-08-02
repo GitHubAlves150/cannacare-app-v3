@@ -88,14 +88,14 @@ type AuthResponse struct {
 
 // UserResponse - Dados do usuário (sem senha)
 type UserResponse struct {
-	ID          string     `json:"id"`
-	AssociationID string   `json:"association_id"` // ← MULTI-TENANCY!
-	Name        string     `json:"name"`
-	Email       string     `json:"email"`
-	Role        string     `json:"role"`
-	IsActive    bool       `json:"is_active"`
-	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID            string     `json:"id"`
+	AssociationID string     `json:"association_id"` // ← MULTI-TENANCY!
+	Name          string     `json:"name"`
+	Email         string     `json:"email"`
+	Role          string     `json:"role"`
+	IsActive      bool       `json:"is_active"`
+	LastLoginAt   *time.Time `json:"last_login_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
 }
 
 // ================================================================
@@ -104,11 +104,11 @@ type UserResponse struct {
 // Registra uma nova associação e cria o usuário admin.
 //
 // FLUXO COMPLETO:
-//   1. Valida os dados (email, CNPJ, senha)
-//   2. Verifica se o email/CNPJ já existe
-//   3. Cria a associação na tabela associations
-//   4. Cria o usuário admin vinculado à associação
-//   5. Retorna os dados do usuário criado
+//  1. Valida os dados (email, CNPJ, senha)
+//  2. Verifica se o email/CNPJ já existe
+//  3. Cria a associação na tabela associations
+//  4. Cria o usuário admin vinculado à associação
+//  5. Retorna os dados do usuário criado
 //
 // ⚠️ IMPORTANTE: O association_id do usuário é o ID da associação criada!
 func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
@@ -117,7 +117,7 @@ func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 		return nil, errors.New("email inválido")
 	}
 
-	// --- PASSO 2: Verificar se o email já existe (em qualquer associação) ---
+	// --- PASSO 2: Verificar se o email já existe ---
 	var existingUser models.User
 	if err := s.db.Where("email = ?", req.Email).First(&existingUser).Error; err == nil {
 		return nil, errors.New("email já cadastrado")
@@ -139,10 +139,8 @@ func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 		return nil, errors.New("erro ao criptografar senha")
 	}
 
-	// --- PASSO 5: Criar a associação ---
-	// A associação é criada com status "pending" (aguardando pagamento)
-	// E plano "basic" com limite de 50 pacientes
-	association := &models.Association{
+	// --- PASSO 5: Criar a associação (SEM PONTEIRO) ---
+	association := models.Association{ // ← SEM & (sem ponteiro)
 		Name:         req.AssociationName,
 		CNPJ:         req.CNPJ,
 		Email:        req.Email,
@@ -150,16 +148,16 @@ func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 		Plan:         "basic",
 		Status:       "pending",
 		PatientLimit: 50,
+		UserLimit:    3, // ← ADICIONAR LIMITE DE USUÁRIOS
 	}
 
-	if err := s.db.Create(association).Error; err != nil {
+	if err := s.db.Create(&association).Error; err != nil { // ← PASSAR PONTEIRO PARA O CREATE
 		return nil, err
 	}
 
 	// --- PASSO 6: Criar o usuário admin ---
-	// O usuário é vinculado à associação através do AssociationID
 	user := &models.User{
-		AssociationID: association.ID, // ← MULTI-TENANCY: vinculado à associação!
+		AssociationID: association.ID,
 		Name:          req.Name,
 		Email:         req.Email,
 		PasswordHash:  string(hashedPassword),
@@ -174,7 +172,7 @@ func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 	// --- PASSO 7: Retornar os dados do usuário ---
 	return &UserResponse{
 		ID:            user.ID.String(),
-		AssociationID: user.AssociationID.String(), // ← MULTI-TENANCY!
+		AssociationID: user.AssociationID.String(),
 		Name:          user.Name,
 		Email:         user.Email,
 		Role:          user.Role,
@@ -189,13 +187,13 @@ func (s *AuthService) Register(req RegisterRequest) (*UserResponse, error) {
 // Autentica um usuário e gera um token JWT.
 //
 // FLUXO COMPLETO:
-//   1. Valida o email
-//   2. Busca o usuário pelo email
-//   3. Verifica se o usuário está ativo
-//   4. Compara a senha (bcrypt)
-//   5. Gera o token JWT com association_id
-//   6. Atualiza o last_login_at
-//   7. Retorna o token + dados do usuário
+//  1. Valida o email
+//  2. Busca o usuário pelo email
+//  3. Verifica se o usuário está ativo
+//  4. Compara a senha (bcrypt)
+//  5. Gera o token JWT com association_id
+//  6. Atualiza o last_login_at
+//  7. Retorna o token + dados do usuário
 //
 // ⚠️ IMPORTANTE: O association_id é extraído do usuário e colocado no JWT!
 // Isso garante que todas as requisições futuras saibam qual associação
