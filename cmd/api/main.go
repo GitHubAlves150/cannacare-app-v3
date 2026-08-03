@@ -128,8 +128,16 @@ func main() {
 	// --- Rotas públicas ---
 	r.Get("/health", healthCheckHandler)
 	r.Get("/", welcomeHandler)
-	r.Post("/api/auth/register", authHandler.Register)
 	r.Post("/api/auth/login", authHandler.Login)
+
+	// --- Rota interna (NÃO pública) ---
+	// Cria uma associação nova do zero, sem passar pela validação de
+	// CNPJ do site. Só para uso manual do time (parcerias, migração de
+	// cliente antigo, testes) — exige a chave X-Internal-Key no header.
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.InternalOnly)
+		r.Post("/api/auth/register", authHandler.Register)
+	})
 
 	// --- Rotas protegidas ---
 	r.Group(func(r chi.Router) {

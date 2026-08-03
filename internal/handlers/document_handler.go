@@ -1,5 +1,5 @@
 // ================================================================
-// PACOTE HANDLERS - DOCUMENT HANDLER
+// PACOTE HANDLERS - DOCUMENT HANDLER (COM MULTI-TENANCY)
 // ================================================================
 // Camada HTTP que lida com as requisições de documentos.
 //
@@ -15,11 +15,8 @@ package handlers
 
 import (
 	"encoding/json"
-	"io"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"cannacare-backend/internal/middleware"
 	"cannacare-backend/internal/services"
@@ -49,22 +46,39 @@ func NewDocumentHandler(documentService *services.DocumentService) *DocumentHand
 }
 
 // ================================================================
-// HANDLER: UPLOAD - CORRIGIDO COM ASSOCIATION_ID
+// FUNÇÃO AUXILIAR: extractAssociationID
 // ================================================================
+func (h *DocumentHandler) extractAssociationID(r *http.Request) (uuid.UUID, error) {
+	associationIDStr, _ := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(associationIDStr)
+}
+
+// ================================================================
+// HANDLER: UPLOAD
+// ================================================================
+// Endpoint: POST /api/patients/{id}/documents
+//
+// # Upload de um documento para o paciente
+//
+// EXEMPLO DE REQUISIÇÃO (multipart/form-data):
+//   - document_type: rg_cpf
+//   - file: arquivo.pdf ou imagem.jpg
 func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// --- 1. Extrair association_id do Context ---
-	associationIDStr := r.Context().Value(middleware.AssociationIDKey).(string)
-	if associationIDStr == "" {
-		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
-		return
-	}
-	associationID, err := uuid.Parse(associationIDStr)
+	associationID, err := h.extractAssociationID(r)
 	if err != nil {
 		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
 		return
 	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
 
-	// --- 2. Extrair patient_id da URL ---
+	// --- 2. Extrair ID do paciente da URL ---
 	patientIDStr := chi.URLParam(r, "id")
 	patientID, err := uuid.Parse(patientIDStr)
 	if err != nil {
@@ -91,7 +105,7 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// --- 5. Obter ID do usuário ---
+	// --- 5. Obter ID do usuário que está fazendo o upload ---
 	userIDStr := r.Context().Value(middleware.UserIDKey).(string)
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
@@ -99,7 +113,7 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 6. Chamar serviço (passando association_id) ---
+	// --- 6. Chamar serviço para upload (passando association_id) ---
 	document, err := h.documentService.Upload(associationID, patientID, documentType, file, fileHeader, userID)
 	if err != nil {
 		log.Printf("❌ Erro ao fazer upload: %v", err)
@@ -107,6 +121,7 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// --- 7. Retornar sucesso ---
 	utils.SendSuccess(w, http.StatusCreated, document)
 }
 
@@ -117,6 +132,16 @@ func (h *DocumentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 //
 // Lista todos os documentos de um paciente
 func (h *DocumentHandler) ListByPatient(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	patientIDStr := chi.URLParam(r, "id")
 	patientID, err := uuid.Parse(patientIDStr)
 	if err != nil {
@@ -124,7 +149,7 @@ func (h *DocumentHandler) ListByPatient(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	documents, err := h.documentService.GetByPatient(patientID)
+	documents, err := h.documentService.GetByPatient(associationID, patientID)
 	if err != nil {
 		log.Printf("❌ Erro ao listar documentos: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar documentos")
@@ -141,6 +166,16 @@ func (h *DocumentHandler) ListByPatient(w http.ResponseWriter, r *http.Request) 
 //
 // Retorna os dados de um documento específico
 func (h *DocumentHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	docIDStr := chi.URLParam(r, "id")
 	docID, err := uuid.Parse(docIDStr)
 	if err != nil {
@@ -148,7 +183,7 @@ func (h *DocumentHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	document, err := h.documentService.GetByID(docID)
+	document, err := h.documentService.GetByID(associationID, docID)
 	if err != nil {
 		if err.Error() == "documento não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -169,6 +204,16 @@ func (h *DocumentHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 //
 // Faz o download do arquivo do documento
 func (h *DocumentHandler) Download(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	docIDStr := chi.URLParam(r, "id")
 	docID, err := uuid.Parse(docIDStr)
 	if err != nil {
@@ -176,46 +221,24 @@ func (h *DocumentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Buscar documento
-	document, err := h.documentService.GetByID(docID)
+	// Gera uma URL assinada do S3, válida por 15 minutos, e devolve em
+	// JSON (em vez de redirecionar) — assim o front só abre a URL numa
+	// aba nova, sem precisar lidar com CORS entre domínios.
+	downloadURL, fileName, err := h.documentService.GetDownloadURL(associationID, docID)
 	if err != nil {
 		if err.Error() == "documento não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
 			return
 		}
-		log.Printf("❌ Erro ao buscar documento: %v", err)
-		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar documento")
+		log.Printf("❌ Erro ao gerar link de download: %v", err)
+		utils.SendError(w, http.StatusInternalServerError, "erro ao gerar link de download")
 		return
 	}
 
-	// Construir caminho do arquivo
-	filename := filepath.Base(document.FileURL)
-	fullPath := filepath.Join("uploads/documents", filename)
-
-	// Verificar se o arquivo existe
-	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		utils.SendError(w, http.StatusNotFound, "arquivo não encontrado no servidor")
-		return
-	}
-
-	// Abrir arquivo
-	file, err := os.Open(fullPath)
-	if err != nil {
-		log.Printf("❌ Erro ao abrir arquivo: %v", err)
-		utils.SendError(w, http.StatusInternalServerError, "erro ao abrir arquivo")
-		return
-	}
-	defer file.Close()
-
-	// Configurar headers para download
-	w.Header().Set("Content-Type", document.MimeType)
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+document.FileName+"\"")
-	w.Header().Set("Content-Length", string(rune(document.FileSize)))
-
-	// Enviar arquivo
-	if _, err := io.Copy(w, file); err != nil {
-		log.Printf("❌ Erro ao enviar arquivo: %v", err)
-	}
+	utils.SendSuccess(w, http.StatusOK, map[string]string{
+		"url":       downloadURL,
+		"file_name": fileName,
+	})
 }
 
 // ================================================================
@@ -225,6 +248,16 @@ func (h *DocumentHandler) Download(w http.ResponseWriter, r *http.Request) {
 //
 // Aprova ou rejeita um documento
 func (h *DocumentHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	docIDStr := chi.URLParam(r, "id")
 	docID, err := uuid.Parse(docIDStr)
 	if err != nil {
@@ -251,7 +284,7 @@ func (h *DocumentHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	document, err := h.documentService.UpdateStatus(docID, req, userID)
+	document, err := h.documentService.UpdateStatus(associationID, docID, req, userID)
 	if err != nil {
 		if err.Error() == "documento não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -272,6 +305,16 @@ func (h *DocumentHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 //
 // Remove um documento
 func (h *DocumentHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	docIDStr := chi.URLParam(r, "id")
 	docID, err := uuid.Parse(docIDStr)
 	if err != nil {
@@ -279,7 +322,7 @@ func (h *DocumentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.documentService.Delete(docID); err != nil {
+	if err := h.documentService.Delete(associationID, docID); err != nil {
 		if err.Error() == "documento não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
 			return

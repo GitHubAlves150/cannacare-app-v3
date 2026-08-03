@@ -1,27 +1,26 @@
 // ================================================================
-// PACOTE SERVICES - DOCUMENT SERVICE
+// PACOTE SERVICES - DOCUMENT SERVICE (COM AWS S3)
 // ================================================================
-// Camada de serviço responsável pela gestão de documentos dos pacientes.
+// ⚠️ MIGRADO: antes salvava em disco local (uploads/documents),
+// o que perde os arquivos a cada reinício/deploy em produção.
+// Agora salva no S3 — os arquivos sobrevivem independente do que
+// acontecer com o servidor.
 //
-// RESPONSABILIDADES:
-// 1. Upload de documentos
-// 2. Listagem de documentos por paciente
-// 3. Download de documentos
-// 4. Aprovação/Rejeição de documentos
-// 5. Remoção de documentos
+// SEGURANÇA: o bucket é PRIVADO (documentos de paciente são dado
+// sensível). Download não serve o arquivo direto — gera uma URL
+// assinada (presigned) que expira em poucos minutos.
 //
-// TIPOS DE DOCUMENTOS:
-//   - rg_cpf: RG ou CPF
-//   - comprovante_residencia: Comprovante de residência
-//   - laudo_medico: Laudo médico
-//   - receita_medica: Receita médica
-//   - autorizacao_anvisa: Autorização da ANVISA
-//   - termo_consentimento: Termo de consentimento
+// VARIÁVEIS DE AMBIENTE NECESSÁRIAS:
+//   AWS_ACCESS_KEY_ID
+//   AWS_SECRET_ACCESS_KEY
+//   AWS_REGION       (ex: sa-east-1)
+//   AWS_S3_BUCKET    (ex: cannacare-documents)
 // ================================================================
 
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +32,9 @@ import (
 
 	"cannacare-backend/internal/models"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -41,20 +43,36 @@ import (
 // STRUCT DOCUMENTSERVICE
 // ================================================================
 type DocumentService struct {
-	db           *gorm.DB
-	uploadPath   string   // Caminho onde os arquivos serão salvos
-	maxFileSize  int64    // Tamanho máximo do arquivo em bytes
-	allowedTypes []string // Tipos de arquivo permitidos
+	db            *gorm.DB
+	s3Client      *s3.Client
+	presignClient *s3.PresignClient
+	bucket        string
+	maxFileSize   int64
+	allowedTypes  []string
 }
 
 // ================================================================
 // FUNÇÃO NEWDOCUMENTSERVICE()
 // ================================================================
 func NewDocumentService(db *gorm.DB) *DocumentService {
+	region := os.Getenv("AWS_REGION")
+	bucket := os.Getenv("AWS_S3_BUCKET")
+
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region))
+	if err != nil {
+		// Não derruba o servidor inteiro por causa disso — só loga.
+		// Upload/download vão falhar com mensagem clara até configurar.
+		fmt.Printf("⚠️ erro ao carregar configuração da AWS: %v\n", err)
+	}
+
+	client := s3.NewFromConfig(cfg)
+
 	return &DocumentService{
-		db:          db,
-		uploadPath:  "uploads/documents",
-		maxFileSize: 10 * 1024 * 1024, // 10 MB
+		db:            db,
+		s3Client:      client,
+		presignClient: s3.NewPresignClient(client),
+		bucket:        bucket,
+		maxFileSize:   10 * 1024 * 1024, // 10 MB
 		allowedTypes: []string{
 			"application/pdf",
 			"image/jpeg",
@@ -68,13 +86,11 @@ func NewDocumentService(db *gorm.DB) *DocumentService {
 // STRUCTS PARA REQUISIÇÕES E RESPOSTAS
 // ================================================================
 
-// DocumentResponse - Resposta com dados do documento
 type DocumentResponse struct {
 	ID           string `json:"id"`
 	PatientID    string `json:"patient_id"`
 	DocumentType string `json:"document_type"`
 	FileName     string `json:"file_name"`
-	FileURL      string `json:"file_url"`
 	FileSize     int64  `json:"file_size"`
 	MimeType     string `json:"mime_type"`
 	Status       string `json:"status"`
@@ -82,16 +98,19 @@ type DocumentResponse struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
-// UpdateDocumentStatusRequest - Para aprovar/rejeitar documento
 type UpdateDocumentStatusRequest struct {
 	Status string `json:"status" validate:"required,oneof=aprovado rejeitado"`
 	Reason string `json:"reason" validate:"omitempty"`
 }
 
 // ================================================================
-// FUNÇÃO UPLOAD - CORRIGIDA COM ASSOCIATION_ID
+// FUNÇÃO UPLOAD()
 // ================================================================
-func (s *DocumentService) Upload(associationID uuid.UUID, patientID uuid.UUID, documentType string, file multipart.File, fileHeader *multipart.FileHeader, userID uuid.UUID) (*DocumentResponse, error) {
+func (s *DocumentService) Upload(associationID, patientID uuid.UUID, documentType string, file multipart.File, fileHeader *multipart.FileHeader, userID uuid.UUID) (*DocumentResponse, error) {
+	if s.bucket == "" {
+		return nil, errors.New("armazenamento de arquivos não configurado (AWS_S3_BUCKET ausente)")
+	}
+
 	// --- 1. Validar tipo de documento ---
 	if !s.isValidDocumentType(documentType) {
 		return nil, fmt.Errorf("tipo de documento inválido: %s", documentType)
@@ -119,46 +138,46 @@ func (s *DocumentService) Upload(associationID uuid.UUID, patientID uuid.UUID, d
 	var patient models.Patient
 	if err := s.db.Where("id = ? AND association_id = ?", patientID, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, errors.New("paciente não encontrado ou não pertence à sua associação")
+			return nil, errors.New("paciente não encontrado")
 		}
 		return nil, err
 	}
 
-	// --- 5. Gerar nome único para o arquivo ---
+	// --- 5. Montar a chave (key) do objeto no S3 ---
+	// Formato: documents/{association_id}/{patient_id}/{tipo}_{timestamp}{extensão}
+	// Isso já isola fisicamente os arquivos por associação dentro do bucket.
 	extension := filepath.Ext(fileHeader.Filename)
 	if extension == "" {
-		ext := getExtensionFromMime(mimeType)
-		extension = "." + ext
+		extension = "." + getExtensionFromMime(mimeType)
 	}
-	filename := fmt.Sprintf("%s_%s_%d%s",
+	key := fmt.Sprintf("documents/%s/%s/%s_%d%s",
+		associationID.String(),
 		patientID.String(),
 		documentType,
 		time.Now().Unix(),
 		extension,
 	)
-	fullPath := filepath.Join(s.uploadPath, filename)
 
-	// --- 6. Salvar o arquivo no disco ---
-	if err := os.MkdirAll(s.uploadPath, 0755); err != nil {
-		return nil, err
-	}
-
-	dst, err := os.Create(fullPath)
+	// --- 6. Enviar para o S3 ---
+	_, err := s.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
+		Bucket:      aws.String(s.bucket),
+		Key:         aws.String(key),
+		Body:        file,
+		ContentType: aws.String(mimeType),
+	})
 	if err != nil {
-		return nil, err
-	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, file); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("erro ao enviar arquivo para o armazenamento: %w", err)
 	}
 
-	// --- 7. Criar registro no banco (COM association_id) ---
+	// --- 7. Criar registro no banco ---
+	// FileURL guarda a CHAVE do objeto no S3, não uma URL fixa — o
+	// bucket é privado, então a URL de verdade é gerada na hora do
+	// download (presigned, expira em poucos minutos).
 	document := &models.PatientDocument{
-		AssociationID: associationID, // ← ⚠️ ESSENCIAL!
+		AssociationID: associationID,
 		PatientID:     patientID,
 		DocumentType:  documentType,
-		FileURL:       fmt.Sprintf("/uploads/documents/%s", filename),
+		FileURL:       key,
 		FileName:      fileHeader.Filename,
 		FileSize:      fileHeader.Size,
 		MimeType:      mimeType,
@@ -166,7 +185,11 @@ func (s *DocumentService) Upload(associationID uuid.UUID, patientID uuid.UUID, d
 	}
 
 	if err := s.db.Create(document).Error; err != nil {
-		os.Remove(fullPath)
+		// Se falhar ao salvar no banco, remove o que já foi enviado ao S3
+		_, _ = s.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		})
 		return nil, err
 	}
 
@@ -174,13 +197,37 @@ func (s *DocumentService) Upload(associationID uuid.UUID, patientID uuid.UUID, d
 }
 
 // ================================================================
+// FUNÇÃO GETDOWNLOADURL() - gera URL assinada temporária
+// ================================================================
+// Válida por 15 minutos. Nunca expõe o bucket publicamente.
+func (s *DocumentService) GetDownloadURL(associationID, id uuid.UUID) (string, string, error) {
+	var document models.PatientDocument
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&document).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", "", errors.New("documento não encontrado")
+		}
+		return "", "", err
+	}
+
+	presignedReq, err := s.presignClient.PresignGetObject(context.Background(), &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(document.FileURL),
+	}, s3.WithPresignExpires(15*time.Minute))
+	if err != nil {
+		return "", "", fmt.Errorf("erro ao gerar link de download: %w", err)
+	}
+
+	return presignedReq.URL, document.FileName, nil
+}
+
+// ================================================================
 // FUNÇÃO GETBYPATIENT()
 // ================================================================
-// Lista todos os documentos de um paciente
-func (s *DocumentService) GetByPatient(patientID uuid.UUID) ([]DocumentResponse, error) {
+func (s *DocumentService) GetByPatient(associationID, patientID uuid.UUID) ([]DocumentResponse, error) {
 	var documents []models.PatientDocument
 
-	if err := s.db.Where("patient_id = ?", patientID).Order("created_at DESC").Find(&documents).Error; err != nil {
+	if err := s.db.Where("patient_id = ? AND association_id = ?", patientID, associationID).
+		Order("created_at DESC").Find(&documents).Error; err != nil {
 		return nil, err
 	}
 
@@ -195,10 +242,9 @@ func (s *DocumentService) GetByPatient(patientID uuid.UUID) ([]DocumentResponse,
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-// Busca um documento pelo ID
-func (s *DocumentService) GetByID(id uuid.UUID) (*DocumentResponse, error) {
+func (s *DocumentService) GetByID(associationID, id uuid.UUID) (*DocumentResponse, error) {
 	var document models.PatientDocument
-	if err := s.db.Where("id = ?", id).First(&document).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&document).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("documento não encontrado")
 		}
@@ -210,17 +256,15 @@ func (s *DocumentService) GetByID(id uuid.UUID) (*DocumentResponse, error) {
 // ================================================================
 // FUNÇÃO UPDATESTATUS()
 // ================================================================
-// Aprova ou rejeita um documento
-func (s *DocumentService) UpdateStatus(id uuid.UUID, req UpdateDocumentStatusRequest, userID uuid.UUID) (*DocumentResponse, error) {
+func (s *DocumentService) UpdateStatus(associationID, id uuid.UUID, req UpdateDocumentStatusRequest, userID uuid.UUID) (*DocumentResponse, error) {
 	var document models.PatientDocument
-	if err := s.db.Where("id = ?", id).First(&document).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&document).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("documento não encontrado")
 		}
 		return nil, err
 	}
 
-	// Atualizar status
 	document.Status = req.Status
 	document.ReviewedBy = &userID
 	now := time.Now().Format("2006-01-02 15:04:05")
@@ -236,25 +280,23 @@ func (s *DocumentService) UpdateStatus(id uuid.UUID, req UpdateDocumentStatusReq
 // ================================================================
 // FUNÇÃO DELETE()
 // ================================================================
-// Remove um documento (físico e do banco)
-func (s *DocumentService) Delete(id uuid.UUID) error {
+func (s *DocumentService) Delete(associationID, id uuid.UUID) error {
 	var document models.PatientDocument
-	if err := s.db.Where("id = ?", id).First(&document).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&document).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return errors.New("documento não encontrado")
 		}
 		return err
 	}
 
-	// Remover arquivo físico
-	filename := filepath.Base(document.FileURL)
-	fullPath := filepath.Join(s.uploadPath, filename)
-	if err := os.Remove(fullPath); err != nil {
-		// Se não conseguir remover, apenas loga o erro
-		fmt.Printf("⚠️ Erro ao remover arquivo: %v\n", err)
+	// Remover do S3
+	if _, err := s.s3Client.DeleteObject(context.Background(), &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(document.FileURL),
+	}); err != nil {
+		fmt.Printf("⚠️ erro ao remover arquivo do S3 (key=%s): %v\n", document.FileURL, err)
 	}
 
-	// Remover registro do banco
 	if err := s.db.Delete(&document).Error; err != nil {
 		return err
 	}
@@ -266,14 +308,12 @@ func (s *DocumentService) Delete(id uuid.UUID) error {
 // FUNÇÕES AUXILIARES
 // ================================================================
 
-// toDocumentResponse - Converte models.PatientDocument para DocumentResponse
 func toDocumentResponse(document *models.PatientDocument) *DocumentResponse {
 	return &DocumentResponse{
 		ID:           document.ID.String(),
 		PatientID:    document.PatientID.String(),
 		DocumentType: document.DocumentType,
 		FileName:     document.FileName,
-		FileURL:      document.FileURL,
 		FileSize:     document.FileSize,
 		MimeType:     document.MimeType,
 		Status:       document.Status,
@@ -282,7 +322,6 @@ func toDocumentResponse(document *models.PatientDocument) *DocumentResponse {
 	}
 }
 
-// isValidDocumentType - Valida se o tipo de documento é permitido
 func (s *DocumentService) isValidDocumentType(docType string) bool {
 	validTypes := []string{
 		"rg_cpf",
@@ -300,7 +339,6 @@ func (s *DocumentService) isValidDocumentType(docType string) bool {
 	return false
 }
 
-// isAllowedMimeType - Valida se o MIME type é permitido
 func (s *DocumentService) isAllowedMimeType(mimeType string) bool {
 	for _, t := range s.allowedTypes {
 		if t == mimeType {
@@ -310,7 +348,6 @@ func (s *DocumentService) isAllowedMimeType(mimeType string) bool {
 	return false
 }
 
-// getExtensionFromMime - Retorna a extensão do arquivo baseado no MIME type
 func getExtensionFromMime(mimeType string) string {
 	extensions := map[string]string{
 		"application/pdf": "pdf",
