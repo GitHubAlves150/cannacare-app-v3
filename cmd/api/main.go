@@ -15,7 +15,6 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -24,7 +23,6 @@ import (
 	"cannacare-backend/internal/database"
 	"cannacare-backend/internal/handlers"
 	"cannacare-backend/internal/middleware"
-	"cannacare-backend/internal/models"
 	"cannacare-backend/internal/services"
 	"cannacare-backend/internal/utils"
 	"cannacare-backend/pkg/jwt"
@@ -32,7 +30,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func main() {
