@@ -20,8 +20,12 @@ import (
 	"net/http"
 	"strings"
 
+	"cannacare-backend/internal/database"
+	"cannacare-backend/internal/models"
 	"cannacare-backend/internal/utils"
 	"cannacare-backend/pkg/jwt"
+
+	"github.com/google/uuid" // ← ADICIONAR ESTE IMPORT!
 )
 
 // ================================================================
@@ -140,6 +144,35 @@ func OptionalAuthMiddleware(jwtService *jwt.JWTService) func(http.Handler) http.
 					}
 				}
 			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ================================================================
+// MIDDLEWARE: VERIFICAR LIMITE DE USUÁRIOS
+// ================================================================
+func CheckUserLimit(associationID uuid.UUID) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Buscar associação
+			var association models.Association
+			db := database.GetDB()
+			if err := db.Where("id = ?", associationID).First(&association).Error; err != nil {
+				utils.SendError(w, http.StatusNotFound, "associação não encontrada")
+				return
+			}
+
+			// Contar usuários
+			var count int64
+			db.Model(&models.User{}).Where("association_id = ?", associationID).Count(&count)
+
+			// Verificar limite
+			if int(count) >= association.UserLimit {
+				utils.SendError(w, http.StatusForbidden, "limite de usuários do plano atingido")
+				return
+			}
+
 			next.ServeHTTP(w, r)
 		})
 	}

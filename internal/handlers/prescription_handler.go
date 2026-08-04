@@ -1,19 +1,6 @@
 // ================================================================
 // PACOTE HANDLERS - PRESCRIPTION HANDLER
 // ================================================================
-// Camada HTTP que lida com as requisições de prescrições.
-//
-// ENDPOINTS:
-//   POST   /api/prescriptions           - Criar prescrição
-//   GET    /api/prescriptions           - Listar prescrições
-//   GET    /api/prescriptions/{id}      - Buscar prescrição por ID
-//   PUT    /api/prescriptions/{id}      - Atualizar prescrição
-//   DELETE /api/prescriptions/{id}      - Remover prescrição
-//   GET    /api/prescriptions/validate/{id} - Validar prescrição
-//   GET    /api/prescriptions/expired   - Prescrições vencidas
-//   POST   /api/prescriptions/update-status - Atualizar status em lote
-// ================================================================
-
 package handlers
 
 import (
@@ -22,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"cannacare-backend/internal/middleware"
 	"cannacare-backend/internal/services"
 	"cannacare-backend/internal/utils"
 
@@ -30,17 +18,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ================================================================
-// STRUCT PRESCRIPTIONHANDLER
-// ================================================================
 type PrescriptionHandler struct {
 	prescriptionService *services.PrescriptionService
 	validator           *validator.Validate
 }
 
-// ================================================================
-// FUNÇÃO NEWPRESCRIPTIONHANDLER()
-// ================================================================
 func NewPrescriptionHandler(prescriptionService *services.PrescriptionService) *PrescriptionHandler {
 	return &PrescriptionHandler{
 		prescriptionService: prescriptionService,
@@ -48,24 +30,33 @@ func NewPrescriptionHandler(prescriptionService *services.PrescriptionService) *
 	}
 }
 
-// ================================================================
-// HANDLER: CREATE
-// ================================================================
-// Endpoint: POST /api/prescriptions
-func (h *PrescriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var req services.CreatePrescriptionRequest
+func (h *PrescriptionHandler) extractAssociationID(r *http.Request) (uuid.UUID, error) {
+	associationIDStr, _ := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(associationIDStr)
+}
 
+// POST /api/prescriptions
+func (h *PrescriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	var req services.CreatePrescriptionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
 	}
 
-	prescription, err := h.prescriptionService.Create(req)
+	prescription, err := h.prescriptionService.Create(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao criar prescrição: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
@@ -75,11 +66,14 @@ func (h *PrescriptionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusCreated, prescription)
 }
 
-// ================================================================
-// HANDLER: GET BY ID
-// ================================================================
-// Endpoint: GET /api/prescriptions/{id}
+// GET /api/prescriptions/{id}
 func (h *PrescriptionHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -87,7 +81,7 @@ func (h *PrescriptionHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prescription, err := h.prescriptionService.GetByID(id)
+	prescription, err := h.prescriptionService.GetByID(associationID, id)
 	if err != nil {
 		if err.Error() == "prescrição não encontrada" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -101,11 +95,14 @@ func (h *PrescriptionHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, prescription)
 }
 
-// ================================================================
-// HANDLER: LIST
-// ================================================================
-// Endpoint: GET /api/prescriptions
+// GET /api/prescriptions
 func (h *PrescriptionHandler) List(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	req := services.ListPrescriptionRequest{
 		PatientID: r.URL.Query().Get("patient_id"),
 		DoctorID:  r.URL.Query().Get("doctor_id"),
@@ -118,7 +115,6 @@ func (h *PrescriptionHandler) List(w http.ResponseWriter, r *http.Request) {
 			req.IsActive = &isActive
 		}
 	}
-
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, err := strconv.Atoi(pageStr)
 		if err == nil {
@@ -132,7 +128,7 @@ func (h *PrescriptionHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	prescriptions, total, err := h.prescriptionService.List(req)
+	prescriptions, total, err := h.prescriptionService.List(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao listar prescrições: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar prescrições")
@@ -147,11 +143,14 @@ func (h *PrescriptionHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: UPDATE
-// ================================================================
-// Endpoint: PUT /api/prescriptions/{id}
+// PUT /api/prescriptions/{id}
 func (h *PrescriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -165,7 +164,7 @@ func (h *PrescriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	prescription, err := h.prescriptionService.Update(id, req)
+	prescription, err := h.prescriptionService.Update(associationID, id, req)
 	if err != nil {
 		if err.Error() == "prescrição não encontrada" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -179,11 +178,14 @@ func (h *PrescriptionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, prescription)
 }
 
-// ================================================================
-// HANDLER: DELETE
-// ================================================================
-// Endpoint: DELETE /api/prescriptions/{id}
+// DELETE /api/prescriptions/{id}
 func (h *PrescriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -191,7 +193,7 @@ func (h *PrescriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.prescriptionService.Delete(id); err != nil {
+	if err := h.prescriptionService.Delete(associationID, id); err != nil {
 		if err.Error() == "prescrição não encontrada" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
 			return
@@ -206,11 +208,14 @@ func (h *PrescriptionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: VALIDATE
-// ================================================================
-// Endpoint: GET /api/prescriptions/validate/{id}
+// GET /api/prescriptions/validate/{id}
 func (h *PrescriptionHandler) Validate(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -218,7 +223,7 @@ func (h *PrescriptionHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.prescriptionService.Validate(id)
+	result, err := h.prescriptionService.Validate(associationID, id)
 	if err != nil {
 		log.Printf("❌ Erro ao validar prescrição: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao validar prescrição")
@@ -228,12 +233,15 @@ func (h *PrescriptionHandler) Validate(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, result)
 }
 
-// ================================================================
-// HANDLER: GET EXPIRED
-// ================================================================
-// Endpoint: GET /api/prescriptions/expired
+// GET /api/prescriptions/expired
 func (h *PrescriptionHandler) GetExpired(w http.ResponseWriter, r *http.Request) {
-	prescriptions, err := h.prescriptionService.GetExpired()
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	prescriptions, err := h.prescriptionService.GetExpired(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar prescrições vencidas: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar prescrições vencidas")
@@ -243,10 +251,8 @@ func (h *PrescriptionHandler) GetExpired(w http.ResponseWriter, r *http.Request)
 	utils.SendSuccess(w, http.StatusOK, prescriptions)
 }
 
-// ================================================================
-// HANDLER: UPDATE STATUS (JOB)
-// ================================================================
-// Endpoint: POST /api/prescriptions/update-status
+// POST /api/prescriptions/update-status
+// ⚠️ Job global — roda para TODAS as associações, por isso não filtra.
 func (h *PrescriptionHandler) UpdateAllStatus(w http.ResponseWriter, r *http.Request) {
 	if err := h.prescriptionService.UpdateAllStatus(); err != nil {
 		log.Printf("❌ Erro ao atualizar status das prescrições: %v", err)

@@ -28,9 +28,10 @@ import (
 type PatientDocument struct {
 	BaseModel
 
-	PatientID      uuid.UUID  `gorm:"type:uuid;not null" json:"patient_id"`
-	PrescriptionID *uuid.UUID `gorm:"type:uuid" json:"prescription_id,omitempty"` // 🆕
-	ReviewedBy     *uuid.UUID `gorm:"type:uuid" json:"reviewed_by,omitempty"`
+	// ⚠️ ESSENCIAL - AssociationID para multi-tenancy
+	AssociationID uuid.UUID  `gorm:"type:uuid;not null;index" json:"association_id"`
+	PatientID     uuid.UUID  `gorm:"type:uuid;not null" json:"patient_id"`
+	ReviewedBy    *uuid.UUID `gorm:"type:uuid" json:"reviewed_by,omitempty"`
 
 	DocumentType string  `gorm:"not null" json:"document_type"`
 	FileURL      string  `gorm:"not null" json:"file_url"`

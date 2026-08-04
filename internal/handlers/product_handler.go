@@ -1,18 +1,6 @@
 // ================================================================
 // PACOTE HANDLERS - PRODUCT HANDLER
 // ================================================================
-// Camada HTTP que lida com as requisições de produtos.
-//
-// ENDPOINTS:
-//   POST   /api/products           - Criar produto
-//   GET    /api/products           - Listar produtos (filtros)
-//   GET    /api/products/{id}      - Buscar produto por ID
-//   PUT    /api/products/{id}      - Atualizar produto
-//   DELETE /api/products/{id}      - Remover produto (soft delete)
-//   GET    /api/products/low-stock - Produtos com estoque baixo
-//   GET    /api/products/stock-summary - Resumo de estoque
-// ================================================================
-
 package handlers
 
 import (
@@ -21,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"cannacare-backend/internal/middleware"
 	"cannacare-backend/internal/services"
 	"cannacare-backend/internal/utils"
 
@@ -29,17 +18,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ================================================================
-// STRUCT PRODUCTHANDLER
-// ================================================================
 type ProductHandler struct {
 	productService *services.ProductService
 	validator      *validator.Validate
 }
 
-// ================================================================
-// FUNÇÃO NEWPRODUCTHANDLER()
-// ================================================================
 func NewProductHandler(productService *services.ProductService) *ProductHandler {
 	return &ProductHandler{
 		productService: productService,
@@ -47,24 +30,33 @@ func NewProductHandler(productService *services.ProductService) *ProductHandler 
 	}
 }
 
-// ================================================================
-// HANDLER: CREATE
-// ================================================================
-// Endpoint: POST /api/products
-func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var req services.CreateProductRequest
+func (h *ProductHandler) extractAssociationID(r *http.Request) (uuid.UUID, error) {
+	associationIDStr, _ := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(associationIDStr)
+}
 
+// POST /api/products
+func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	var req services.CreateProductRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
 	}
 
-	product, err := h.productService.Create(req)
+	product, err := h.productService.Create(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao criar produto: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
@@ -74,11 +66,14 @@ func (h *ProductHandler) Create(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusCreated, product)
 }
 
-// ================================================================
-// HANDLER: GET BY ID
-// ================================================================
-// Endpoint: GET /api/products/{id}
+// GET /api/products/{id}
 func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -86,7 +81,7 @@ func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.productService.GetByID(id)
+	product, err := h.productService.GetByID(associationID, id)
 	if err != nil {
 		if err.Error() == "produto não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -100,11 +95,14 @@ func (h *ProductHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, product)
 }
 
-// ================================================================
-// HANDLER: LIST
-// ================================================================
-// Endpoint: GET /api/products
+// GET /api/products
 func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	req := services.ListProductRequest{
 		Name: r.URL.Query().Get("name"),
 	}
@@ -115,7 +113,6 @@ func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 			req.IsActive = &isActive
 		}
 	}
-
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
 		page, err := strconv.Atoi(pageStr)
 		if err == nil {
@@ -129,7 +126,7 @@ func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	products, total, err := h.productService.List(req)
+	products, total, err := h.productService.List(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao listar produtos: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar produtos")
@@ -144,11 +141,14 @@ func (h *ProductHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: UPDATE
-// ================================================================
-// Endpoint: PUT /api/products/{id}
+// PUT /api/products/{id}
 func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -162,7 +162,7 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.productService.Update(id, req)
+	product, err := h.productService.Update(associationID, id, req)
 	if err != nil {
 		if err.Error() == "produto não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -176,11 +176,14 @@ func (h *ProductHandler) Update(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, product)
 }
 
-// ================================================================
-// HANDLER: DELETE
-// ================================================================
-// Endpoint: DELETE /api/products/{id}
+// DELETE /api/products/{id}
 func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -188,7 +191,7 @@ func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.productService.Delete(id); err != nil {
+	if err := h.productService.Delete(associationID, id); err != nil {
 		if err.Error() == "produto não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
 			return
@@ -203,12 +206,15 @@ func (h *ProductHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: GET LOW STOCK
-// ================================================================
-// Endpoint: GET /api/products/low-stock
+// GET /api/products/low-stock
 func (h *ProductHandler) GetLowStock(w http.ResponseWriter, r *http.Request) {
-	products, err := h.productService.GetLowStock()
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	products, err := h.productService.GetLowStock(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar produtos com estoque baixo: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar produtos com estoque baixo")
@@ -218,12 +224,15 @@ func (h *ProductHandler) GetLowStock(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, products)
 }
 
-// ================================================================
-// HANDLER: GET STOCK SUMMARY
-// ================================================================
-// Endpoint: GET /api/products/stock-summary
+// GET /api/products/stock-summary
 func (h *ProductHandler) GetStockSummary(w http.ResponseWriter, r *http.Request) {
-	summary, err := h.productService.GetStockSummary()
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	summary, err := h.productService.GetStockSummary(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar resumo de estoque: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar resumo de estoque")

@@ -1,18 +1,6 @@
 // ================================================================
 // PACOTE HANDLERS - ORDER HANDLER
 // ================================================================
-// Camada HTTP que lida com as requisições de pedidos.
-//
-// ENDPOINTS:
-//   POST   /api/orders                     - Criar pedido
-//   GET    /api/orders                     - Listar pedidos (filtros)
-//   GET    /api/orders/{id}                - Buscar pedido por ID
-//   GET    /api/orders/patient/{id}        - Pedidos do paciente
-//   PATCH  /api/orders/{id}/status         - Atualizar status
-//   PATCH  /api/orders/{id}/tracking       - Adicionar rastreio
-//   POST   /api/orders/{id}/label          - Gerar etiqueta
-// ================================================================
-
 package handlers
 
 import (
@@ -30,17 +18,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// ================================================================
-// STRUCT ORDERHANDLER
-// ================================================================
 type OrderHandler struct {
 	orderService *services.OrderService
 	validator    *validator.Validate
 }
 
-// ================================================================
-// FUNÇÃO NEWORDERHANDLER()
-// ================================================================
 func NewOrderHandler(orderService *services.OrderService) *OrderHandler {
 	return &OrderHandler{
 		orderService: orderService,
@@ -48,18 +30,27 @@ func NewOrderHandler(orderService *services.OrderService) *OrderHandler {
 	}
 }
 
-// ================================================================
-// HANDLER: CREATE ORDER
-// ================================================================
-// Endpoint: POST /api/orders
-func (h *OrderHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var req services.CreateOrderRequest
+func (h *OrderHandler) extractAssociationID(r *http.Request) (uuid.UUID, error) {
+	associationIDStr, _ := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(associationIDStr)
+}
 
+// POST /api/orders
+func (h *OrderHandler) Create(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	var req services.CreateOrderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
@@ -72,7 +63,7 @@ func (h *OrderHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.orderService.Create(req, userID)
+	order, err := h.orderService.Create(associationID, req, userID)
 	if err != nil {
 		log.Printf("❌ Erro ao criar pedido: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
@@ -82,11 +73,14 @@ func (h *OrderHandler) Create(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusCreated, order)
 }
 
-// ================================================================
-// HANDLER: GET BY ID
-// ================================================================
-// Endpoint: GET /api/orders/{id}
+// GET /api/orders/{id}
 func (h *OrderHandler) GetByID(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -94,7 +88,7 @@ func (h *OrderHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.orderService.GetByID(id)
+	order, err := h.orderService.GetByID(associationID, id)
 	if err != nil {
 		if err.Error() == "pedido não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -108,11 +102,14 @@ func (h *OrderHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, order)
 }
 
-// ================================================================
-// HANDLER: LIST ORDERS
-// ================================================================
-// Endpoint: GET /api/orders
+// GET /api/orders
 func (h *OrderHandler) List(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	req := services.ListOrderRequest{
 		PatientID:      r.URL.Query().Get("patient_id"),
 		PrescriptionID: r.URL.Query().Get("prescription_id"),
@@ -132,7 +129,7 @@ func (h *OrderHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	orders, total, err := h.orderService.List(req)
+	orders, total, err := h.orderService.List(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao listar pedidos: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar pedidos")
@@ -147,11 +144,14 @@ func (h *OrderHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ================================================================
-// HANDLER: GET BY PATIENT
-// ================================================================
-// Endpoint: GET /api/orders/patient/{id}
+// GET /api/orders/patient/{id}
 func (h *OrderHandler) GetByPatient(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	patientIDStr := chi.URLParam(r, "id")
 	patientID, err := uuid.Parse(patientIDStr)
 	if err != nil {
@@ -159,7 +159,7 @@ func (h *OrderHandler) GetByPatient(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orders, err := h.orderService.GetByPatient(patientID)
+	orders, err := h.orderService.GetByPatient(associationID, patientID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar pedidos do paciente: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar pedidos do paciente")
@@ -169,11 +169,14 @@ func (h *OrderHandler) GetByPatient(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, orders)
 }
 
-// ================================================================
-// HANDLER: UPDATE STATUS
-// ================================================================
-// Endpoint: PATCH /api/orders/{id}/status
+// PATCH /api/orders/{id}/status
 func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -186,7 +189,6 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
@@ -199,7 +201,7 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	order, err := h.orderService.UpdateStatus(id, req, userID)
+	order, err := h.orderService.UpdateStatus(associationID, id, req, userID)
 	if err != nil {
 		if err.Error() == "pedido não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -213,11 +215,14 @@ func (h *OrderHandler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, order)
 }
 
-// ================================================================
-// HANDLER: UPDATE TRACKING
-// ================================================================
-// Endpoint: PATCH /api/orders/{id}/tracking
+// PATCH /api/orders/{id}/tracking
 func (h *OrderHandler) UpdateTracking(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -230,13 +235,12 @@ func (h *OrderHandler) UpdateTracking(w http.ResponseWriter, r *http.Request) {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
-
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
 	}
 
-	order, err := h.orderService.UpdateTracking(id, req)
+	order, err := h.orderService.UpdateTracking(associationID, id, req)
 	if err != nil {
 		if err.Error() == "pedido não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -250,11 +254,14 @@ func (h *OrderHandler) UpdateTracking(w http.ResponseWriter, r *http.Request) {
 	utils.SendSuccess(w, http.StatusOK, order)
 }
 
-// ================================================================
-// HANDLER: GENERATE LABEL
-// ================================================================
-// Endpoint: POST /api/orders/{id}/label
+// POST /api/orders/{id}/label
 func (h *OrderHandler) GenerateLabel(w http.ResponseWriter, r *http.Request) {
+	associationID, err := h.extractAssociationID(r)
+	if err != nil || associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -262,7 +269,7 @@ func (h *OrderHandler) GenerateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	labelURL, err := h.orderService.GenerateLabel(id)
+	labelURL, err := h.orderService.GenerateLabel(associationID, id)
 	if err != nil {
 		if err.Error() == "pedido não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())

@@ -1,15 +1,7 @@
 // ================================================================
 // PACOTE SERVICES - ANAMNESE SERVICE
 // ================================================================
-// Camada de serviço responsável pela gestão de anamneses e rastreamentos.
-//
-// RESPONSABILIDADES:
-// 1. Criar anamnese inicial
-// 2. Criar rastreamentos periódicos (1 mês, 3 meses, 6 meses)
-// 3. Listar anamneses por paciente
-// 4. Buscar anamnese por ID
-// 5. Atualizar anamnese
-// 6. Acompanhamento contínuo
+// ⚠️ CORRIGIDO: Create() não recebia nem setava associationID.
 // ================================================================
 
 package services
@@ -23,27 +15,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// ================================================================
-// STRUCT ANAMNESESERVICE
-// ================================================================
 type AnamneseService struct {
 	db *gorm.DB
 }
 
-// ================================================================
-// FUNÇÃO NEWANAMNESESERVICE()
-// ================================================================
 func NewAnamneseService(db *gorm.DB) *AnamneseService {
-	return &AnamneseService{
-		db: db,
-	}
+	return &AnamneseService{db: db}
 }
 
-// ================================================================
-// STRUCTS PARA REQUISIÇÕES E RESPOSTAS
-// ================================================================
-
-// CreateAnamneseRequest - Dados para criar uma anamnese
 type CreateAnamneseRequest struct {
 	Type                string                 `json:"type" validate:"required,oneof=inicial rastreio_1_mes rastreio_3_meses rastreio_6_meses acompanhamento_continuo"`
 	Symptoms            string                 `json:"symptoms" validate:"omitempty"`
@@ -60,7 +39,6 @@ type CreateAnamneseRequest struct {
 	ExtraResponses      map[string]interface{} `json:"extra_responses" validate:"omitempty"`
 }
 
-// UpdateAnamneseRequest - Dados para atualizar uma anamnese
 type UpdateAnamneseRequest struct {
 	Symptoms            string                 `json:"symptoms" validate:"omitempty"`
 	SymptomIntensity    *int                   `json:"symptom_intensity" validate:"omitempty,min=1,max=10"`
@@ -76,7 +54,6 @@ type UpdateAnamneseRequest struct {
 	ExtraResponses      map[string]interface{} `json:"extra_responses" validate:"omitempty"`
 }
 
-// AnamneseResponse - Resposta com dados da anamnese
 type AnamneseResponse struct {
 	ID                  string                 `json:"id"`
 	PatientID           string                 `json:"patient_id"`
@@ -100,7 +77,6 @@ type AnamneseResponse struct {
 	UpdatedAt           string                 `json:"updated_at"`
 }
 
-// ListAnamneseRequest - Filtros para listagem
 type ListAnamneseRequest struct {
 	PatientID string `json:"patient_id" query:"patient_id"`
 	Type      string `json:"type" query:"type"`
@@ -111,11 +87,10 @@ type ListAnamneseRequest struct {
 // ================================================================
 // FUNÇÃO CREATE()
 // ================================================================
-// Cria uma nova anamnese para um paciente
-func (s *AnamneseService) Create(patientID uuid.UUID, userID uuid.UUID, req CreateAnamneseRequest) (*AnamneseResponse, error) {
-	// --- 1. Validar paciente ---
+func (s *AnamneseService) Create(associationID, patientID, userID uuid.UUID, req CreateAnamneseRequest) (*AnamneseResponse, error) {
+	// --- 1. Validar paciente (DENTRO da associação) ---
 	var patient models.Patient
-	if err := s.db.Where("id = ?", patientID).First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", patientID, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("paciente não encontrado")
 		}
@@ -137,7 +112,7 @@ func (s *AnamneseService) Create(patientID uuid.UUID, userID uuid.UUID, req Crea
 	// --- 3. Verificar se já existe anamnese inicial para este paciente ---
 	if req.Type == "inicial" {
 		var existing models.Anamnese
-		err := s.db.Where("patient_id = ? AND type = ?", patientID, "inicial").First(&existing).Error
+		err := s.db.Where("patient_id = ? AND type = ? AND association_id = ?", patientID, "inicial", associationID).First(&existing).Error
 		if err == nil {
 			return nil, errors.New("paciente já possui anamnese inicial")
 		} else if err != gorm.ErrRecordNotFound {
@@ -170,6 +145,7 @@ func (s *AnamneseService) Create(patientID uuid.UUID, userID uuid.UUID, req Crea
 
 	// --- 7. Criar anamnese ---
 	anamnese := &models.Anamnese{
+		AssociationID:       associationID, // ← ESSENCIAL!
 		PatientID:           patientID,
 		ResponsibleUserID:   userID,
 		Type:                req.Type,
@@ -206,11 +182,10 @@ func (s *AnamneseService) Create(patientID uuid.UUID, userID uuid.UUID, req Crea
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-// Busca uma anamnese pelo ID
-func (s *AnamneseService) GetByID(id uuid.UUID) (*AnamneseResponse, error) {
+func (s *AnamneseService) GetByID(associationID, id uuid.UUID) (*AnamneseResponse, error) {
 	var anamnese models.Anamnese
 	if err := s.db.Preload("Patient").Preload("ResponsibleUser").
-		Where("id = ?", id).First(&anamnese).Error; err != nil {
+		Where("id = ? AND association_id = ?", id, associationID).First(&anamnese).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("anamnese não encontrada")
 		}
@@ -222,11 +197,10 @@ func (s *AnamneseService) GetByID(id uuid.UUID) (*AnamneseResponse, error) {
 // ================================================================
 // FUNÇÃO GETBYPATIENT()
 // ================================================================
-// Lista todas as anamneses de um paciente
-func (s *AnamneseService) GetByPatient(patientID uuid.UUID) ([]AnamneseResponse, error) {
+func (s *AnamneseService) GetByPatient(associationID, patientID uuid.UUID) ([]AnamneseResponse, error) {
 	var anamneses []models.Anamnese
 	if err := s.db.Preload("Patient").Preload("ResponsibleUser").
-		Where("patient_id = ?", patientID).Order("created_at DESC").
+		Where("patient_id = ? AND association_id = ?", patientID, associationID).Order("created_at DESC").
 		Find(&anamneses).Error; err != nil {
 		return nil, err
 	}
@@ -242,9 +216,7 @@ func (s *AnamneseService) GetByPatient(patientID uuid.UUID) ([]AnamneseResponse,
 // ================================================================
 // FUNÇÃO LIST()
 // ================================================================
-// Lista anamneses com filtros e paginação
-func (s *AnamneseService) List(req ListAnamneseRequest) ([]AnamneseResponse, int64, error) {
-	// --- 1. Definir paginação ---
+func (s *AnamneseService) List(associationID uuid.UUID, req ListAnamneseRequest) ([]AnamneseResponse, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -253,8 +225,7 @@ func (s *AnamneseService) List(req ListAnamneseRequest) ([]AnamneseResponse, int
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir query ---
-	query := s.db.Model(&models.Anamnese{})
+	query := s.db.Model(&models.Anamnese{}).Where("association_id = ?", associationID)
 
 	if req.PatientID != "" {
 		patientID, err := uuid.Parse(req.PatientID)
@@ -267,13 +238,11 @@ func (s *AnamneseService) List(req ListAnamneseRequest) ([]AnamneseResponse, int
 		query = query.Where("type = ?", req.Type)
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var anamneses []models.Anamnese
 	if err := query.Preload("Patient").Preload("ResponsibleUser").
 		Offset(offset).Limit(req.Limit).Order("created_at DESC").
@@ -281,7 +250,6 @@ func (s *AnamneseService) List(req ListAnamneseRequest) ([]AnamneseResponse, int
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []AnamneseResponse
 	for _, a := range anamneses {
 		responses = append(responses, *s.toAnamneseResponse(&a))
@@ -293,17 +261,15 @@ func (s *AnamneseService) List(req ListAnamneseRequest) ([]AnamneseResponse, int
 // ================================================================
 // FUNÇÃO UPDATE()
 // ================================================================
-// Atualiza uma anamnese existente
-func (s *AnamneseService) Update(id uuid.UUID, req UpdateAnamneseRequest) (*AnamneseResponse, error) {
+func (s *AnamneseService) Update(associationID, id uuid.UUID, req UpdateAnamneseRequest) (*AnamneseResponse, error) {
 	var anamnese models.Anamnese
-	if err := s.db.Where("id = ?", id).First(&anamnese).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&anamnese).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("anamnese não encontrada")
 		}
 		return nil, err
 	}
 
-	// --- 1. Atualizar campos ---
 	if req.Symptoms != "" {
 		anamnese.Symptoms = req.Symptoms
 	}
@@ -366,9 +332,8 @@ func (s *AnamneseService) Update(id uuid.UUID, req UpdateAnamneseRequest) (*Anam
 // ================================================================
 // FUNÇÃO DELETE()
 // ================================================================
-// Remove uma anamnese (soft delete)
-func (s *AnamneseService) Delete(id uuid.UUID) error {
-	result := s.db.Delete(&models.Anamnese{}, "id = ?", id)
+func (s *AnamneseService) Delete(associationID, id uuid.UUID) error {
+	result := s.db.Where("association_id = ?", associationID).Delete(&models.Anamnese{}, "id = ?", id)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -381,8 +346,6 @@ func (s *AnamneseService) Delete(id uuid.UUID) error {
 // ================================================================
 // FUNÇÕES AUXILIARES
 // ================================================================
-
-// toAnamneseResponse - Converte models.Anamnese para AnamneseResponse
 func (s *AnamneseService) toAnamneseResponse(a *models.Anamnese) *AnamneseResponse {
 	// ============================================================
 	// 🔧 CORREÇÃO: Verificar se os relacionamentos existem

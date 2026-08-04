@@ -1,3 +1,14 @@
+// ================================================================
+// CANNACARE - CONFIG (CORRIGIDO)
+// ================================================================
+// ⚠️ CORRIGIDO: JWT_SECRET não tem mais valor padrão. Antes, se a
+// variável de ambiente não fosse definida, o servidor subia
+// silenciosamente com a chave "cannacare-super-secret-key-2026"
+// hardcoded no código-fonte (e visível pra qualquer um com acesso
+// ao repositório) — isso permitiria forjar tokens JWT válidos.
+// Agora o servidor RECUSA subir sem uma chave real e forte definida.
+// ================================================================
+
 package config
 
 import (
@@ -21,8 +32,8 @@ type Config struct {
 	ServerPort string
 
 	// === JWT ===
-	JWTSecret     string
-	JWTExpiresIn  time.Duration
+	JWTSecret    string
+	JWTExpiresIn time.Duration
 
 	// === AMBIENTE ===
 	Env string
@@ -33,6 +44,8 @@ func Load() *Config {
 	if err != nil {
 		log.Println("⚠️ Aviso: Arquivo .env não encontrado, usando variáveis de ambiente")
 	}
+
+	jwtSecret := requireStrongSecret("JWT_SECRET")
 
 	return &Config{
 		// Database
@@ -47,7 +60,7 @@ func Load() *Config {
 		ServerPort: getEnv("SERVER_PORT", "8080"),
 
 		// JWT
-		JWTSecret:    getEnv("JWT_SECRET", "cannacare-super-secret-key-2026"),
+		JWTSecret:    jwtSecret,
 		JWTExpiresIn: getEnvAsDuration("JWT_EXPIRES_IN", 24*time.Hour),
 
 		// Environment
@@ -70,4 +83,32 @@ func getEnvAsDuration(key string, defaultValue time.Duration) time.Duration {
 		}
 	}
 	return defaultValue
+}
+
+// ================================================================
+// requireStrongSecret - exige a variável definida E forte o bastante
+// ================================================================
+// Derruba o servidor na inicialização (não numa requisição aleatória
+// depois) se a chave estiver ausente ou for fraca demais pra assinar
+// tokens JWT com segurança.
+func requireStrongSecret(key string) string {
+	value := os.Getenv(key)
+
+	if value == "" {
+		log.Fatalf("❌ %s não está definido. Configure uma chave forte no .env antes de subir o servidor. "+
+			"Gere uma com: openssl rand -base64 48", key)
+	}
+
+	if len(value) < 32 {
+		log.Fatalf("❌ %s muito curto (%d caracteres). Use pelo menos 32 caracteres. "+
+			"Gere uma com: openssl rand -base64 48", key, len(value))
+	}
+
+	// Bloqueia explicitamente o valor antigo que ficava hardcoded no
+	// código, pra ninguém copiar e colar ele "só pra testar" e esquecer.
+	if value == "cannacare-super-secret-key-2026" || value == "cannacare-super-secret-key-2026-change-in-production" {
+		log.Fatalf("❌ %s ainda está com o valor de exemplo antigo. Gere uma chave nova com: openssl rand -base64 48", key)
+	}
+
+	return value
 }

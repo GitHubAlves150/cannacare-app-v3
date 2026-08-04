@@ -1,5 +1,5 @@
 // ================================================================
-// PACOTE HANDLERS - DOCTOR HANDLER
+// PACOTE HANDLERS - DOCTOR HANDLER (COM MULTI-TENANCY COMPLETO)
 // ================================================================
 // Camada HTTP que lida com as requisições de médicos.
 //
@@ -15,6 +15,7 @@
 package handlers
 
 import (
+	"cannacare-backend/internal/middleware"
 	"cannacare-backend/internal/services"
 	"cannacare-backend/internal/utils"
 	"encoding/json"
@@ -46,46 +47,71 @@ func NewDoctorHandler(doctorService *services.DoctorService) *DoctorHandler {
 }
 
 // ================================================================
+// FUNÇÃO AUXILIAR: extractAssociationID
+// ================================================================
+func (h *DoctorHandler) extractAssociationID(r *http.Request) (uuid.UUID, error) {
+	associationIDStr := r.Context().Value(middleware.AssociationIDKey).(string)
+	if associationIDStr == "" {
+		return uuid.Nil, nil
+	}
+	return uuid.Parse(associationIDStr)
+}
+
+// ================================================================
 // HANDLER: CREATE DOCTOR
 // ================================================================
-// Endpoint: POST /api/doctors
-//
-// Cria um novo médico no sistema
 func (h *DoctorHandler) Create(w http.ResponseWriter, r *http.Request) {
-	var req services.CreateDoctorRequest
+	// --- 1. Extrair association_id do Context ---
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
 
-	// --- 1. Decodificar JSON ---
+	// --- 2. Decodificar JSON ---
+	var req services.CreateDoctorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
 
-	// --- 2. Validar dados ---
+	// --- 3. Validar dados ---
 	if err := h.validator.Struct(req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "dados inválidos: "+err.Error())
 		return
 	}
 
-	// --- 3. Chamar serviço ---
-	doctor, err := h.doctorService.Create(req)
+	// --- 4. Chamar serviço (passando association_id) ---
+	doctor, err := h.doctorService.Create(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao criar médico: %v", err)
 		utils.SendError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	// --- 4. Retornar sucesso ---
 	utils.SendSuccess(w, http.StatusCreated, doctor)
 }
 
 // ================================================================
-// HANDLER: GET DOCTOR BY ID
+// HANDLER: GET DOCTOR BY ID (CORRIGIDO)
 // ================================================================
-// Endpoint: GET /api/doctors/:id
-//
-// Busca um médico pelo ID
 func (h *DoctorHandler) GetByID(w http.ResponseWriter, r *http.Request) {
-	// --- 1. Extrair ID da URL ---
+	// --- 1. Extrair association_id do Context ---
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	// --- 2. Extrair ID da URL ---
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -93,8 +119,8 @@ func (h *DoctorHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 2. Buscar médico ---
-	doctor, err := h.doctorService.GetByID(id)
+	// --- 3. Chamar serviço (passando association_id) ---
+	doctor, err := h.doctorService.GetByID(associationID, id)
 	if err != nil {
 		if err.Error() == "médico não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -105,25 +131,31 @@ func (h *DoctorHandler) GetByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 3. Retornar sucesso ---
 	utils.SendSuccess(w, http.StatusOK, doctor)
 }
 
 // ================================================================
-// HANDLER: LIST DOCTORS
+// HANDLER: LIST DOCTORS (CORRIGIDO)
 // ================================================================
-// Endpoint: GET /api/doctors
-//
-// Lista médicos com filtros e paginação
 func (h *DoctorHandler) List(w http.ResponseWriter, r *http.Request) {
-	// --- 1. Extrair query params ---
+	// --- 1. Extrair association_id do Context ---
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	// --- 2. Extrair filtros da URL ---
 	req := services.ListDoctorRequest{
 		Name:      r.URL.Query().Get("name"),
 		CRM:       r.URL.Query().Get("crm"),
 		Specialty: r.URL.Query().Get("specialty"),
 	}
 
-	// Parse is_active
 	if isActiveStr := r.URL.Query().Get("is_active"); isActiveStr != "" {
 		isActive, err := strconv.ParseBool(isActiveStr)
 		if err == nil {
@@ -131,29 +163,23 @@ func (h *DoctorHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse paginação
 	if pageStr := r.URL.Query().Get("page"); pageStr != "" {
-		page, err := strconv.Atoi(pageStr)
-		if err == nil {
-			req.Page = page
-		}
+		page, _ := strconv.Atoi(pageStr)
+		req.Page = page
 	}
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		limit, err := strconv.Atoi(limitStr)
-		if err == nil {
-			req.Limit = limit
-		}
+		limit, _ := strconv.Atoi(limitStr)
+		req.Limit = limit
 	}
 
-	// --- 2. Chamar serviço ---
-	doctors, total, err := h.doctorService.List(req)
+	// --- 3. Chamar serviço (passando association_id) ---
+	doctors, total, err := h.doctorService.List(associationID, req)
 	if err != nil {
 		log.Printf("❌ Erro ao listar médicos: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao listar médicos")
 		return
 	}
 
-	// --- 3. Retornar sucesso com metadados ---
 	utils.SendSuccess(w, http.StatusOK, map[string]interface{}{
 		"items": doctors,
 		"total": total,
@@ -163,13 +189,21 @@ func (h *DoctorHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // ================================================================
-// HANDLER: UPDATE DOCTOR
+// HANDLER: UPDATE DOCTOR (CORRIGIDO)
 // ================================================================
-// Endpoint: PUT /api/doctors/:id
-//
-// Atualiza os dados de um médico
 func (h *DoctorHandler) Update(w http.ResponseWriter, r *http.Request) {
-	// --- 1. Extrair ID da URL ---
+	// --- 1. Extrair association_id do Context ---
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	// --- 2. Extrair ID da URL ---
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -177,15 +211,15 @@ func (h *DoctorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 2. Decodificar JSON ---
+	// --- 3. Decodificar JSON ---
 	var req services.UpdateDoctorRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendError(w, http.StatusBadRequest, "corpo da requisição inválido")
 		return
 	}
 
-	// --- 3. Chamar serviço ---
-	doctor, err := h.doctorService.Update(id, req)
+	// --- 4. Chamar serviço (passando association_id) ---
+	doctor, err := h.doctorService.Update(associationID, id, req)
 	if err != nil {
 		if err.Error() == "médico não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
@@ -196,18 +230,25 @@ func (h *DoctorHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 4. Retornar sucesso ---
 	utils.SendSuccess(w, http.StatusOK, doctor)
 }
 
 // ================================================================
-// HANDLER: DELETE DOCTOR
+// HANDLER: DELETE DOCTOR (CORRIGIDO)
 // ================================================================
-// Endpoint: DELETE /api/doctors/:id
-//
-// Remove um médico (soft delete)
 func (h *DoctorHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	// --- 1. Extrair ID da URL ---
+	// --- 1. Extrair association_id do Context ---
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	// --- 2. Extrair ID da URL ---
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)
 	if err != nil {
@@ -215,8 +256,8 @@ func (h *DoctorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 2. Chamar serviço ---
-	if err := h.doctorService.Delete(id); err != nil {
+	// --- 3. Chamar serviço (passando association_id) ---
+	if err := h.doctorService.Delete(associationID, id); err != nil {
 		if err.Error() == "médico não encontrado" {
 			utils.SendError(w, http.StatusNotFound, err.Error())
 			return
@@ -226,20 +267,28 @@ func (h *DoctorHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// --- 3. Retornar sucesso ---
 	utils.SendSuccess(w, http.StatusOK, map[string]string{
 		"message": "Médico removido com sucesso",
 	})
 }
 
 // ================================================================
-// HANDLER: GET TOP DOCTORS
+// HANDLER: GET TOP DOCTORS (CORRIGIDO)
 // ================================================================
-// Endpoint: GET /api/doctors/top
-//
-// Retorna os médicos que mais prescrevem
 func (h *DoctorHandler) GetTopDoctors(w http.ResponseWriter, r *http.Request) {
-	doctors, err := h.doctorService.GetTopDoctors()
+	// --- 1. Extrair association_id do Context ---
+	associationID, err := h.extractAssociationID(r)
+	if err != nil {
+		utils.SendError(w, http.StatusInternalServerError, "erro ao obter ID da associação")
+		return
+	}
+	if associationID == uuid.Nil {
+		utils.SendError(w, http.StatusUnauthorized, "associação não identificada")
+		return
+	}
+
+	// --- 2. Chamar serviço (passando association_id) ---
+	doctors, err := h.doctorService.GetTopDoctors(associationID)
 	if err != nil {
 		log.Printf("❌ Erro ao buscar top médicos: %v", err)
 		utils.SendError(w, http.StatusInternalServerError, "erro ao buscar top médicos")

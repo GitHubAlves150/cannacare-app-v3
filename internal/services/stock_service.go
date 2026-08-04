@@ -1,15 +1,9 @@
 // ================================================================
 // PACOTE SERVICES - STOCK SERVICE
 // ================================================================
-// Camada de serviço responsável pelo controle de estoque.
-//
-// RESPONSABILIDADES:
-// 1. CRUD de lotes de produtos
-// 2. Registrar entrada de produtos
-// 3. Registrar saída de produtos (baixa por pedido)
-// 4. Ajustes manuais de estoque
-// 5. Alertas de validade próxima
-// 6. Histórico de movimentações
+// ⚠️ CORRIGIDO: CreateLot() e AdjustStock() não setavam associationID
+// no ProductLot/StockMovement criados. Todas as buscas agora também
+// filtram por associação.
 // ================================================================
 
 package services
@@ -25,25 +19,13 @@ import (
 	"gorm.io/gorm"
 )
 
-// ================================================================
-// STRUCT STOCKSERVICE
-// ================================================================
 type StockService struct {
 	db *gorm.DB
 }
 
-// ================================================================
-// FUNÇÃO NEWSTOCKSERVICE()
-// ================================================================
 func NewStockService(db *gorm.DB) *StockService {
-	return &StockService{
-		db: db,
-	}
+	return &StockService{db: db}
 }
-
-// ================================================================
-// STRUCTS PARA REQUISIÇÕES E RESPOSTAS
-// ================================================================
 
 type CreateLotRequest struct {
 	ProductID      string    `json:"product_id" validate:"required"`
@@ -126,16 +108,15 @@ type ListMovementRequest struct {
 // ================================================================
 // FUNÇÃO CREATELOT()
 // ================================================================
-// Cria um novo lote para um produto
-func (s *StockService) CreateLot(req CreateLotRequest, userID uuid.UUID) (*LotResponse, error) {
-	// --- 1. Validar produto ---
+func (s *StockService) CreateLot(associationID uuid.UUID, req CreateLotRequest, userID uuid.UUID) (*LotResponse, error) {
+	// --- 1. Validar produto (DENTRO da associação) ---
 	productID, err := uuid.Parse(req.ProductID)
 	if err != nil {
 		return nil, fmt.Errorf("ID do produto inválido: %w", err)
 	}
 
 	var product models.Product
-	if err := s.db.Where("id = ?", productID).First(&product).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", productID, associationID).First(&product).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("produto não encontrado")
 		}
@@ -147,9 +128,9 @@ func (s *StockService) CreateLot(req CreateLotRequest, userID uuid.UUID) (*LotRe
 		return nil, errors.New("data de validade não pode ser anterior à data atual")
 	}
 
-	// --- 3. Validar lote único por produto ---
+	// --- 3. Validar lote único por produto (DENTRO da associação) ---
 	var existingLot models.ProductLot
-	err = s.db.Where("product_id = ? AND lot_number = ?", productID, req.LotNumber).First(&existingLot).Error
+	err = s.db.Where("product_id = ? AND lot_number = ? AND association_id = ?", productID, req.LotNumber, associationID).First(&existingLot).Error
 	if err == nil {
 		return nil, fmt.Errorf("lote %s já existe para este produto", req.LotNumber)
 	} else if err != gorm.ErrRecordNotFound {
@@ -159,6 +140,7 @@ func (s *StockService) CreateLot(req CreateLotRequest, userID uuid.UUID) (*LotRe
 	// --- 4. Criar lote ---
 	now := time.Now()
 	lot := &models.ProductLot{
+		AssociationID:   associationID, // ← ESSENCIAL!
 		ProductID:       productID,
 		LotNumber:       req.LotNumber,
 		ExpirationDate:  req.ExpirationDate,
@@ -177,6 +159,7 @@ func (s *StockService) CreateLot(req CreateLotRequest, userID uuid.UUID) (*LotRe
 
 	// --- 5. Registrar movimentação de entrada ---
 	movement := &models.StockMovement{
+		AssociationID:    associationID, // ← ESSENCIAL!
 		ProductLotID:     lot.ID,
 		UserID:           userID,
 		Type:             "entrada",
@@ -196,28 +179,24 @@ func (s *StockService) CreateLot(req CreateLotRequest, userID uuid.UUID) (*LotRe
 // ================================================================
 // FUNÇÃO ADJUSTSTOCK()
 // ================================================================
-// Ajusta manualmente o estoque de um lote
-func (s *StockService) AdjustStock(req StockAdjustRequest, userID uuid.UUID) (*StockMovementResponse, error) {
-	// --- 1. Validar lote ---
+func (s *StockService) AdjustStock(associationID uuid.UUID, req StockAdjustRequest, userID uuid.UUID) (*StockMovementResponse, error) {
 	lotID, err := uuid.Parse(req.ProductLotID)
 	if err != nil {
 		return nil, fmt.Errorf("ID do lote inválido: %w", err)
 	}
 
 	var lot models.ProductLot
-	if err := s.db.Where("id = ?", lotID).First(&lot).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", lotID, associationID).First(&lot).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("lote não encontrado")
 		}
 		return nil, err
 	}
 
-	// --- 2. Validar quantidade ---
 	if req.Quantity < 0 && lot.CurrentQuantity+req.Quantity < 0 {
 		return nil, fmt.Errorf("estoque insuficiente. Disponível: %d", lot.CurrentQuantity)
 	}
 
-	// --- 3. Atualizar quantidade ---
 	previousQuantity := lot.CurrentQuantity
 	lot.CurrentQuantity += req.Quantity
 
@@ -225,13 +204,13 @@ func (s *StockService) AdjustStock(req StockAdjustRequest, userID uuid.UUID) (*S
 		return nil, err
 	}
 
-	// --- 4. Registrar movimentação ---
 	movementType := "ajuste_manual"
 	if req.Quantity < 0 {
 		movementType = "perda"
 	}
 
 	movement := &models.StockMovement{
+		AssociationID:    associationID, // ← ESSENCIAL!
 		ProductLotID:     lotID,
 		UserID:           userID,
 		Type:             movementType,
@@ -251,26 +230,22 @@ func (s *StockService) AdjustStock(req StockAdjustRequest, userID uuid.UUID) (*S
 // ================================================================
 // FUNÇÃO GETLOTBYID()
 // ================================================================
-// Busca um lote pelo ID
-func (s *StockService) GetLotByID(id uuid.UUID) (*LotResponse, error) {
+func (s *StockService) GetLotByID(associationID, id uuid.UUID) (*LotResponse, error) {
 	var lot models.ProductLot
-	if err := s.db.Preload("Product").Where("id = ?", id).First(&lot).Error; err != nil {
+	if err := s.db.Preload("Product").Where("id = ? AND association_id = ?", id, associationID).First(&lot).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("lote não encontrado")
 		}
 		return nil, err
 	}
 
-	// ✅ CORRETO: passar o produto como valor (não ponteiro)
 	return s.toLotResponse(&lot, lot.Product), nil
 }
 
 // ================================================================
 // FUNÇÃO LISTLOTS()
 // ================================================================
-// Lista lotes com filtros e paginação
-func (s *StockService) ListLots(req ListLotRequest) ([]LotResponse, int64, error) {
-	// --- 1. Definir paginação ---
+func (s *StockService) ListLots(associationID uuid.UUID, req ListLotRequest) ([]LotResponse, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -279,8 +254,7 @@ func (s *StockService) ListLots(req ListLotRequest) ([]LotResponse, int64, error
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir query ---
-	query := s.db.Model(&models.ProductLot{}).Preload("Product")
+	query := s.db.Model(&models.ProductLot{}).Where("association_id = ?", associationID).Preload("Product")
 
 	if req.ProductID != "" {
 		productID, err := uuid.Parse(req.ProductID)
@@ -296,19 +270,16 @@ func (s *StockService) ListLots(req ListLotRequest) ([]LotResponse, int64, error
 		}
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var lots []models.ProductLot
 	if err := query.Offset(offset).Limit(req.Limit).Order("created_at DESC").Find(&lots).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []LotResponse
 	for i := range lots {
 		responses = append(responses, *s.toLotResponse(&lots[i], lots[i].Product))
@@ -320,9 +291,7 @@ func (s *StockService) ListLots(req ListLotRequest) ([]LotResponse, int64, error
 // ================================================================
 // FUNÇÃO GETMOVEMENTS()
 // ================================================================
-// Lista movimentações de estoque com filtros
-func (s *StockService) GetMovements(req ListMovementRequest) ([]StockMovementResponse, int64, error) {
-	// --- 1. Definir paginação ---
+func (s *StockService) GetMovements(associationID uuid.UUID, req ListMovementRequest) ([]StockMovementResponse, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -331,8 +300,7 @@ func (s *StockService) GetMovements(req ListMovementRequest) ([]StockMovementRes
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir query ---
-	query := s.db.Model(&models.StockMovement{}).
+	query := s.db.Model(&models.StockMovement{}).Where("association_id = ?", associationID).
 		Preload("ProductLot").
 		Preload("ProductLot.Product").
 		Preload("User")
@@ -347,19 +315,16 @@ func (s *StockService) GetMovements(req ListMovementRequest) ([]StockMovementRes
 		query = query.Where("type = ?", req.Type)
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var movements []models.StockMovement
 	if err := query.Offset(offset).Limit(req.Limit).Order("created_at DESC").Find(&movements).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []StockMovementResponse
 	for i := range movements {
 		responses = append(responses, *s.toMovementResponse(&movements[i]))
@@ -371,12 +336,12 @@ func (s *StockService) GetMovements(req ListMovementRequest) ([]StockMovementRes
 // ================================================================
 // FUNÇÃO GETEXPIRINGLOTS()
 // ================================================================
-// Retorna lotes com validade próxima (30 dias)
-func (s *StockService) GetExpiringLots() ([]LotResponse, error) {
+func (s *StockService) GetExpiringLots(associationID uuid.UUID) ([]LotResponse, error) {
 	thirtyDaysFromNow := time.Now().AddDate(0, 0, 30)
 
 	var lots []models.ProductLot
 	if err := s.db.Preload("Product").
+		Where("association_id = ?", associationID).
 		Where("expiration_date BETWEEN ? AND ?", time.Now(), thirtyDaysFromNow).
 		Where("current_quantity > 0").
 		Order("expiration_date ASC").
@@ -395,10 +360,9 @@ func (s *StockService) GetExpiringLots() ([]LotResponse, error) {
 // ================================================================
 // FUNÇÃO GETLOWSTOCK()
 // ================================================================
-// Retorna produtos com estoque baixo (usando view)
-func (s *StockService) GetLowStock() ([]map[string]interface{}, error) {
+func (s *StockService) GetLowStock(associationID uuid.UUID) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := s.db.Table("vw_low_stock").Find(&results).Error
+	err := s.db.Table("vw_low_stock").Where("association_id = ?", associationID).Find(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -408,10 +372,9 @@ func (s *StockService) GetLowStock() ([]map[string]interface{}, error) {
 // ================================================================
 // FUNÇÃO GETSTOCKSUMMARY()
 // ================================================================
-// Retorna resumo de estoque (usando view)
-func (s *StockService) GetStockSummary() ([]map[string]interface{}, error) {
+func (s *StockService) GetStockSummary(associationID uuid.UUID) ([]map[string]interface{}, error) {
 	var results []map[string]interface{}
-	err := s.db.Table("vw_stock_summary").Find(&results).Error
+	err := s.db.Table("vw_stock_summary").Where("association_id = ?", associationID).Find(&results).Error
 	if err != nil {
 		return nil, err
 	}
@@ -421,8 +384,6 @@ func (s *StockService) GetStockSummary() ([]map[string]interface{}, error) {
 // ================================================================
 // FUNÇÕES AUXILIARES
 // ================================================================
-
-// toLotResponse - Converte models.ProductLot para LotResponse
 func (s *StockService) toLotResponse(lot *models.ProductLot, product *models.Product) *LotResponse {
 	daysUntilExpire := int(lot.ExpirationDate.Sub(time.Now()).Hours() / 24)
 	isExpired := daysUntilExpire < 0
@@ -460,19 +421,18 @@ func (s *StockService) toLotResponse(lot *models.ProductLot, product *models.Pro
 	}
 }
 
-// toMovementResponse - Converte models.StockMovement para StockMovementResponse
 func (s *StockService) toMovementResponse(movement *models.StockMovement) *StockMovementResponse {
 	productName := ""
 	lotNumber := ""
-	if movement.ProductLot.ID != uuid.Nil {
-		if movement.ProductLot.Product.ID != uuid.Nil {
+	if movement.ProductLot != nil && movement.ProductLot.ID != uuid.Nil {
+		if movement.ProductLot.Product != nil && movement.ProductLot.Product.ID != uuid.Nil {
 			productName = movement.ProductLot.Product.Name
 		}
 		lotNumber = movement.ProductLot.LotNumber
 	}
 
 	userName := ""
-	if movement.User.ID != uuid.Nil {
+	if movement.User != nil && movement.User.ID != uuid.Nil {
 		userName = movement.User.Name
 	}
 

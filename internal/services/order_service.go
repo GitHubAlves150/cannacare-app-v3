@@ -1,16 +1,8 @@
 // ================================================================
 // PACOTE SERVICES - ORDER SERVICE
 // ================================================================
-// Camada de serviço responsável pela gestão de pedidos.
-//
-// RESPONSABILIDADES:
-// 1. CRUD completo de pedidos
-// 2. Validar receita antes de criar pedido
-// 3. Validar estoque disponível
-// 4. Baixa automática no estoque
-// 5. Controle de status do pedido
-// 6. Geração de etiqueta de envio (PDF)
-// 7. Histórico de pedidos por paciente
+// ⚠️ CORRIGIDO: Create() não recebia associationID. OrderItem e
+// StockMovement criados dentro do fluxo também precisam do campo.
 // ================================================================
 
 package services
@@ -26,74 +18,56 @@ import (
 	"gorm.io/gorm"
 )
 
-// ================================================================
-// STRUCT ORDERSERVICE
-// ================================================================
 type OrderService struct {
 	db *gorm.DB
 }
 
-// ================================================================
-// FUNÇÃO NEWORDERSERVICE()
-// ================================================================
 func NewOrderService(db *gorm.DB) *OrderService {
-	return &OrderService{
-		db: db,
-	}
+	return &OrderService{db: db}
 }
 
-// ================================================================
-// STRUCTS PARA REQUISIÇÕES E RESPOSTAS
-// ================================================================
-
-// CreateOrderRequest - Dados para criar um novo pedido
 type CreateOrderRequest struct {
-	PatientID      string                        `json:"patient_id" validate:"required"`
-	PrescriptionID string                        `json:"prescription_id" validate:"required"`
-	Items          []CreateOrderItemRequest      `json:"items" validate:"required,min=1"`
-	Notes          string                        `json:"notes" validate:"omitempty"`
+	PatientID      string                   `json:"patient_id" validate:"required"`
+	PrescriptionID string                   `json:"prescription_id" validate:"required"`
+	Items          []CreateOrderItemRequest `json:"items" validate:"required,min=1"`
+	Notes          string                   `json:"notes" validate:"omitempty"`
 }
 
-// CreateOrderItemRequest - Item do pedido
 type CreateOrderItemRequest struct {
 	ProductLotID string  `json:"product_lot_id" validate:"required"`
 	Quantity     int     `json:"quantity" validate:"required,min=1"`
 	UnitPrice    float64 `json:"unit_price" validate:"required,min=0"`
 }
 
-// UpdateOrderStatusRequest - Para atualizar status do pedido
 type UpdateOrderStatusRequest struct {
 	Status string `json:"status" validate:"required,oneof=pendente separado dispensa correio entregue cancelado"`
 	Notes  string `json:"notes" validate:"omitempty"`
 }
 
-// UpdateTrackingRequest - Para adicionar código de rastreio
 type UpdateTrackingRequest struct {
-	TrackingCode   string `json:"tracking_code" validate:"required"`
+	TrackingCode    string `json:"tracking_code" validate:"required"`
 	ShippingCarrier string `json:"shipping_carrier" validate:"required"`
 }
 
-// OrderResponse - Resposta com dados do pedido
 type OrderResponse struct {
-	ID               string                   `json:"id"`
-	PatientID        string                   `json:"patient_id"`
-	PatientName      string                   `json:"patient_name"`
-	PrescriptionID   string                   `json:"prescription_id"`
-	Status           string                   `json:"status"`
-	TotalAmount      float64                  `json:"total_amount"`
-	Notes            string                   `json:"notes,omitempty"`
-	OrderDate        string                   `json:"order_date"`
-	StatusUpdatedAt  string                   `json:"status_updated_at"`
-	ShippingCarrier  string                   `json:"shipping_carrier,omitempty"`
-	TrackingCode     string                   `json:"tracking_code,omitempty"`
-	ShippingLabelURL string                   `json:"shipping_label_url,omitempty"`
-	ShippingCost     float64                  `json:"shipping_cost,omitempty"`
-	Items            []OrderItemResponse      `json:"items"`
-	CreatedAt        string                   `json:"created_at"`
-	UpdatedAt        string                   `json:"updated_at"`
+	ID               string              `json:"id"`
+	PatientID        string              `json:"patient_id"`
+	PatientName      string              `json:"patient_name"`
+	PrescriptionID   string              `json:"prescription_id"`
+	Status           string              `json:"status"`
+	TotalAmount      float64             `json:"total_amount"`
+	Notes            string              `json:"notes,omitempty"`
+	OrderDate        string              `json:"order_date"`
+	StatusUpdatedAt  string              `json:"status_updated_at"`
+	ShippingCarrier  string              `json:"shipping_carrier,omitempty"`
+	TrackingCode     string              `json:"tracking_code,omitempty"`
+	ShippingLabelURL string              `json:"shipping_label_url,omitempty"`
+	ShippingCost     float64             `json:"shipping_cost,omitempty"`
+	Items            []OrderItemResponse `json:"items"`
+	CreatedAt        string              `json:"created_at"`
+	UpdatedAt        string              `json:"updated_at"`
 }
 
-// OrderItemResponse - Item do pedido
 type OrderItemResponse struct {
 	ID           string  `json:"id"`
 	ProductLotID string  `json:"product_lot_id"`
@@ -104,7 +78,6 @@ type OrderItemResponse struct {
 	TotalPrice   float64 `json:"total_price"`
 }
 
-// ListOrderRequest - Filtros para listagem
 type ListOrderRequest struct {
 	PatientID      string `json:"patient_id" query:"patient_id"`
 	PrescriptionID string `json:"prescription_id" query:"prescription_id"`
@@ -113,58 +86,49 @@ type ListOrderRequest struct {
 	Limit          int    `json:"limit" query:"limit"`
 }
 
-// OrderValidationResult - Resultado da validação do pedido
 type OrderValidationResult struct {
-	IsValid   bool   `json:"is_valid"`
-	Message   string `json:"message"`
-	OrderID   string `json:"order_id,omitempty"`
+	IsValid bool   `json:"is_valid"`
+	Message string `json:"message"`
+	OrderID string `json:"order_id,omitempty"`
 }
 
 // ================================================================
 // FUNÇÃO CREATE()
 // ================================================================
-// Cria um novo pedido
-//
-// VALIDAÇÕES:
-// 1. Paciente existe e está ativo
-// 2. Prescrição existe e é válida
-// 3. Estoque disponível para cada item
-// 4. Dar baixa no estoque
-func (s *OrderService) Create(req CreateOrderRequest, userID uuid.UUID) (*OrderResponse, error) {
-	// --- 1. Validar paciente ---
+func (s *OrderService) Create(associationID uuid.UUID, req CreateOrderRequest, userID uuid.UUID) (*OrderResponse, error) {
+	// --- 1. Validar paciente (DENTRO da associação) ---
 	patientID, err := uuid.Parse(req.PatientID)
 	if err != nil {
 		return nil, fmt.Errorf("ID do paciente inválido: %w", err)
 	}
 
 	var patient models.Patient
-	if err := s.db.Where("id = ? AND status = ?", patientID, "aprovado").First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND status = ? AND association_id = ?", patientID, "aprovado", associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("paciente não encontrado ou não aprovado")
 		}
 		return nil, err
 	}
 
-	// --- 2. Validar prescrição ---
+	// --- 2. Validar prescrição (DENTRO da associação) ---
 	prescriptionID, err := uuid.Parse(req.PrescriptionID)
 	if err != nil {
 		return nil, fmt.Errorf("ID da prescrição inválido: %w", err)
 	}
 
 	var prescription models.Prescription
-	if err := s.db.Where("id = ? AND is_active = ? AND status != ?", prescriptionID, true, "vencida").First(&prescription).Error; err != nil {
+	if err := s.db.Where("id = ? AND is_active = ? AND status != ? AND association_id = ?", prescriptionID, true, "vencida", associationID).First(&prescription).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("prescrição não encontrada, inativa ou vencida")
 		}
 		return nil, err
 	}
 
-	// Verificar se a prescrição pertence ao paciente
 	if prescription.PatientID != patientID {
 		return nil, errors.New("prescrição não pertence a este paciente")
 	}
 
-	// --- 3. Validar estoque e criar itens ---
+	// --- 3. Validar estoque e criar itens (lotes DENTRO da associação) ---
 	var orderItems []models.OrderItem
 	var totalAmount float64
 
@@ -174,66 +138,79 @@ func (s *OrderService) Create(req CreateOrderRequest, userID uuid.UUID) (*OrderR
 			return nil, fmt.Errorf("ID do lote inválido: %w", err)
 		}
 
-		// Buscar lote
 		var lot models.ProductLot
-		if err := s.db.Preload("Product").Where("id = ?", lotID).First(&lot).Error; err != nil {
+		if err := s.db.Preload("Product").Where("id = ? AND association_id = ?", lotID, associationID).First(&lot).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
 				return nil, fmt.Errorf("lote não encontrado: %s", itemReq.ProductLotID)
 			}
 			return nil, err
 		}
 
-		// Validar estoque
 		if lot.CurrentQuantity < itemReq.Quantity {
 			return nil, fmt.Errorf("estoque insuficiente para o lote %s. Disponível: %d, Solicitado: %d",
 				lot.LotNumber, lot.CurrentQuantity, itemReq.Quantity)
 		}
 
-		// Validar validade
 		if lot.ExpirationDate.Before(time.Now()) {
 			return nil, fmt.Errorf("lote %s está vencido", lot.LotNumber)
 		}
 
-		// Validar se o lote pertence a um produto da prescrição
-		// (verificar se o produto está na prescrição)
 		var prescriptionItem models.PrescriptionItem
-		if err := s.db.Where("prescription_id = ? AND product_id = ?", prescriptionID, lot.ProductID).First(&prescriptionItem).Error; err != nil {
+		if err := s.db.Where("prescription_id = ? AND product_id = ? AND association_id = ?", prescriptionID, lot.ProductID, associationID).First(&prescriptionItem).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				return nil, fmt.Errorf("produto %s não está na prescrição", lot.Product.Name)
+				productName := ""
+				if lot.Product != nil {
+					productName = lot.Product.Name
+				}
+				return nil, fmt.Errorf("produto %s não está na prescrição", productName)
 			}
 			return nil, err
 		}
 
-		// Criar item do pedido
 		itemTotal := float64(itemReq.Quantity) * itemReq.UnitPrice
 		orderItems = append(orderItems, models.OrderItem{
-			ProductLotID: lotID,
-			Quantity:     itemReq.Quantity,
-			UnitPrice:    itemReq.UnitPrice,
+			AssociationID: associationID, // ← ESSENCIAL!
+			ProductLotID:  lotID,
+			Quantity:      itemReq.Quantity,
+			UnitPrice:     itemReq.UnitPrice,
 		})
 		totalAmount += itemTotal
 	}
 
-	// --- 4. Criar o pedido ---
+	// --- 4. Criar o pedido (SEM os itens ainda) ---
 	order := &models.Order{
-		PatientID:      patientID,
-		PrescriptionID: prescriptionID,
-		Status:         "pendente",
-		TotalAmount:    totalAmount,
-		Notes:          req.Notes,
-		OrderDate:      time.Now(),
+		AssociationID:   associationID, // ← ESSENCIAL!
+		PatientID:       patientID,
+		PrescriptionID:  prescriptionID,
+		Status:          "pendente",
+		TotalAmount:     totalAmount,
+		Notes:           req.Notes,
+		OrderDate:       time.Now(),
 		StatusUpdatedAt: time.Now(),
-		Items:          orderItems,
 	}
 
 	if err := s.db.Create(order).Error; err != nil {
 		return nil, err
 	}
 
+	// --- 4b. Criar os itens SEPARADAMENTE, omitindo TotalPrice ---
+	// ⚠️ total_price é uma coluna GERADA PELO POSTGRES (quantity * unit_price).
+	// Se criarmos os itens junto com o pedido (via order.Items = orderItems),
+	// o GORM ignora a permissão "só leitura" do campo e tenta inserir um
+	// valor nela, o que o Postgres rejeita. Por isso criamos item por item,
+	// com Omit("TotalPrice") explícito — assim o banco calcula sozinho.
+	for i := range orderItems {
+		orderItems[i].OrderID = order.ID
+		if err := s.db.Omit("TotalPrice").Create(&orderItems[i]).Error; err != nil {
+			return nil, err
+		}
+	}
+	order.Items = orderItems
+
 	// --- 5. Dar baixa no estoque (atualizar quantidades) ---
 	for _, item := range order.Items {
 		var lot models.ProductLot
-		if err := s.db.Where("id = ?", item.ProductLotID).First(&lot).Error; err != nil {
+		if err := s.db.Where("id = ? AND association_id = ?", item.ProductLotID, associationID).First(&lot).Error; err != nil {
 			return nil, err
 		}
 
@@ -244,8 +221,8 @@ func (s *OrderService) Create(req CreateOrderRequest, userID uuid.UUID) (*OrderR
 			return nil, err
 		}
 
-		// Registrar movimentação de estoque
 		movement := &models.StockMovement{
+			AssociationID:    associationID, // ← ESSENCIAL!
 			ProductLotID:     lot.ID,
 			OrderID:          &order.ID,
 			UserID:           userID,
@@ -273,11 +250,10 @@ func (s *OrderService) Create(req CreateOrderRequest, userID uuid.UUID) (*OrderR
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-// Busca um pedido pelo ID
-func (s *OrderService) GetByID(id uuid.UUID) (*OrderResponse, error) {
+func (s *OrderService) GetByID(associationID, id uuid.UUID) (*OrderResponse, error) {
 	var order models.Order
 	if err := s.db.Preload("Items").Preload("Items.ProductLot").Preload("Items.ProductLot.Product").
-		Preload("Patient").Preload("Prescription").Where("id = ?", id).First(&order).Error; err != nil {
+		Preload("Patient").Preload("Prescription").Where("id = ? AND association_id = ?", id, associationID).First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("pedido não encontrado")
 		}
@@ -290,9 +266,7 @@ func (s *OrderService) GetByID(id uuid.UUID) (*OrderResponse, error) {
 // ================================================================
 // FUNÇÃO LIST()
 // ================================================================
-// Lista pedidos com filtros e paginação
-func (s *OrderService) List(req ListOrderRequest) ([]OrderResponse, int64, error) {
-	// --- 1. Definir paginação ---
+func (s *OrderService) List(associationID uuid.UUID, req ListOrderRequest) ([]OrderResponse, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -301,8 +275,8 @@ func (s *OrderService) List(req ListOrderRequest) ([]OrderResponse, int64, error
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	// --- 2. Construir query ---
-	query := s.db.Model(&models.Order{}).Preload("Items").Preload("Items.ProductLot").Preload("Items.ProductLot.Product").
+	query := s.db.Model(&models.Order{}).Where("association_id = ?", associationID).
+		Preload("Items").Preload("Items.ProductLot").Preload("Items.ProductLot.Product").
 		Preload("Patient").Preload("Prescription")
 
 	if req.PatientID != "" {
@@ -321,19 +295,16 @@ func (s *OrderService) List(req ListOrderRequest) ([]OrderResponse, int64, error
 		query = query.Where("status = ?", req.Status)
 	}
 
-	// --- 3. Contar total ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 4. Buscar com paginação ---
 	var orders []models.Order
 	if err := query.Offset(offset).Limit(req.Limit).Order("created_at DESC").Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
 
-	// --- 5. Converter para resposta ---
 	var responses []OrderResponse
 	for _, order := range orders {
 		responses = append(responses, *s.toOrderResponse(&order))
@@ -345,23 +316,19 @@ func (s *OrderService) List(req ListOrderRequest) ([]OrderResponse, int64, error
 // ================================================================
 // FUNÇÃO UPDATESTATUS()
 // ================================================================
-// Atualiza o status de um pedido
-func (s *OrderService) UpdateStatus(id uuid.UUID, req UpdateOrderStatusRequest, userID uuid.UUID) (*OrderResponse, error) {
-	// --- 1. Buscar pedido ---
+func (s *OrderService) UpdateStatus(associationID, id uuid.UUID, req UpdateOrderStatusRequest, userID uuid.UUID) (*OrderResponse, error) {
 	var order models.Order
-	if err := s.db.Where("id = ?", id).First(&order).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("pedido não encontrado")
 		}
 		return nil, err
 	}
 
-	// --- 2. Validar transição de status ---
 	if !s.isValidStatusTransition(order.Status, req.Status) {
 		return nil, fmt.Errorf("transição de status inválida: %s → %s", order.Status, req.Status)
 	}
 
-	// --- 3. Atualizar status ---
 	order.Status = req.Status
 	order.StatusUpdatedAt = time.Now()
 	if req.Notes != "" {
@@ -372,7 +339,6 @@ func (s *OrderService) UpdateStatus(id uuid.UUID, req UpdateOrderStatusRequest, 
 		return nil, err
 	}
 
-	// --- 4. Carregar relacionamentos ---
 	if err := s.db.Preload("Items").Preload("Items.ProductLot").Preload("Items.ProductLot.Product").
 		Preload("Patient").Preload("Prescription").Where("id = ?", order.ID).First(&order).Error; err != nil {
 		return nil, err
@@ -384,23 +350,19 @@ func (s *OrderService) UpdateStatus(id uuid.UUID, req UpdateOrderStatusRequest, 
 // ================================================================
 // FUNÇÃO UPDATETRACKING()
 // ================================================================
-// Adiciona código de rastreio ao pedido
-func (s *OrderService) UpdateTracking(id uuid.UUID, req UpdateTrackingRequest) (*OrderResponse, error) {
-	// --- 1. Buscar pedido ---
+func (s *OrderService) UpdateTracking(associationID, id uuid.UUID, req UpdateTrackingRequest) (*OrderResponse, error) {
 	var order models.Order
-	if err := s.db.Where("id = ?", id).First(&order).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("pedido não encontrado")
 		}
 		return nil, err
 	}
 
-	// --- 2. Verificar se o pedido está em status correto ---
 	if order.Status != "correio" && order.Status != "entregue" {
 		return nil, errors.New("pedido deve estar com status 'correio' ou 'entregue' para adicionar rastreio")
 	}
 
-	// --- 3. Atualizar rastreio ---
 	order.TrackingCode = req.TrackingCode
 	order.ShippingCarrier = req.ShippingCarrier
 
@@ -408,7 +370,6 @@ func (s *OrderService) UpdateTracking(id uuid.UUID, req UpdateTrackingRequest) (
 		return nil, err
 	}
 
-	// --- 4. Carregar relacionamentos ---
 	if err := s.db.Preload("Items").Preload("Items.ProductLot").Preload("Items.ProductLot.Product").
 		Preload("Patient").Preload("Prescription").Where("id = ?", order.ID).First(&order).Error; err != nil {
 		return nil, err
@@ -420,12 +381,11 @@ func (s *OrderService) UpdateTracking(id uuid.UUID, req UpdateTrackingRequest) (
 // ================================================================
 // FUNÇÃO GETBYPATIENT()
 // ================================================================
-// Lista pedidos de um paciente específico
-func (s *OrderService) GetByPatient(patientID uuid.UUID) ([]OrderResponse, error) {
+func (s *OrderService) GetByPatient(associationID, patientID uuid.UUID) ([]OrderResponse, error) {
 	var orders []models.Order
 	if err := s.db.Preload("Items").Preload("Items.ProductLot").Preload("Items.ProductLot.Product").
 		Preload("Patient").Preload("Prescription").
-		Where("patient_id = ?", patientID).Order("created_at DESC").
+		Where("patient_id = ? AND association_id = ?", patientID, associationID).Order("created_at DESC").
 		Find(&orders).Error; err != nil {
 		return nil, err
 	}
@@ -441,26 +401,21 @@ func (s *OrderService) GetByPatient(patientID uuid.UUID) ([]OrderResponse, error
 // ================================================================
 // FUNÇÃO GENERATELABEL()
 // ================================================================
-// Gera uma etiqueta de envio (simulado - retorna URL)
-func (s *OrderService) GenerateLabel(id uuid.UUID) (string, error) {
-	// --- 1. Verificar se o pedido existe ---
+func (s *OrderService) GenerateLabel(associationID, id uuid.UUID) (string, error) {
 	var order models.Order
-	if err := s.db.Where("id = ?", id).First(&order).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&order).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return "", errors.New("pedido não encontrado")
 		}
 		return "", err
 	}
 
-	// --- 2. Verificar se o pedido está em status correto ---
 	if order.Status != "dispensa" && order.Status != "correio" {
 		return "", errors.New("pedido deve estar com status 'dispensa' ou 'correio' para gerar etiqueta")
 	}
 
-	// --- 3. Gerar URL da etiqueta (simulado) ---
 	labelURL := fmt.Sprintf("/api/orders/%s/label.pdf", order.ID.String())
 
-	// --- 4. Salvar URL no pedido ---
 	order.ShippingLabelURL = labelURL
 	if err := s.db.Save(&order).Error; err != nil {
 		return "", err
@@ -472,17 +427,14 @@ func (s *OrderService) GenerateLabel(id uuid.UUID) (string, error) {
 // ================================================================
 // FUNÇÕES AUXILIARES
 // ================================================================
-
-// isValidStatusTransition - Valida transição de status
 func (s *OrderService) isValidStatusTransition(currentStatus, newStatus string) bool {
-	// Mapa de transições válidas
 	validTransitions := map[string][]string{
-		"pendente":   {"separado", "cancelado"},
-		"separado":   {"dispensa", "cancelado"},
-		"dispensa":   {"correio", "cancelado"},
-		"correio":    {"entregue", "cancelado"},
-		"entregue":   {},
-		"cancelado":  {},
+		"pendente":  {"separado", "cancelado"},
+		"separado":  {"dispensa", "cancelado"},
+		"dispensa":  {"correio", "cancelado"},
+		"correio":   {"entregue", "cancelado"},
+		"entregue":  {},
+		"cancelado": {},
 	}
 
 	allowed, exists := validTransitions[currentStatus]
@@ -499,15 +451,14 @@ func (s *OrderService) isValidStatusTransition(currentStatus, newStatus string) 
 	return false
 }
 
-// toOrderResponse - Converte models.Order para OrderResponse
 func (s *OrderService) toOrderResponse(order *models.Order) *OrderResponse {
 	items := []OrderItemResponse{}
 	for _, item := range order.Items {
 		productName := ""
 		lotNumber := ""
-		if item.ProductLot.ID != uuid.Nil {
+		if item.ProductLot != nil && item.ProductLot.ID != uuid.Nil {
 			lotNumber = item.ProductLot.LotNumber
-			if item.ProductLot.Product.ID != uuid.Nil {
+			if item.ProductLot.Product != nil && item.ProductLot.Product.ID != uuid.Nil {
 				productName = item.ProductLot.Product.Name
 			}
 		}
@@ -523,7 +474,7 @@ func (s *OrderService) toOrderResponse(order *models.Order) *OrderResponse {
 	}
 
 	patientName := ""
-	if order.Patient.ID != uuid.Nil {
+	if order.Patient != nil && order.Patient.ID != uuid.Nil {
 		patientName = order.Patient.FullName
 	}
 

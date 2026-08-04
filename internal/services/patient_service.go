@@ -1,15 +1,12 @@
 // ================================================================
-// PACOTE SERVICES - PATIENT SERVICE
+// CANNACARE - PATIENT SERVICE
 // ================================================================
-// Camada de serviço responsável pela gestão de pacientes.
+// Camada de serviço responsável pela lógica de negócio de pacientes.
 //
-// RESPONSABILIDADES:
-// 1. CRUD completo de pacientes
-// 2. Validação de dados (CPF, email, telefone, data de nascimento)
-// 3. Busca com filtros (nome, CPF, status, etc)
-// 4. Controle de status do paciente
-// 5. ✅ CORRIGIDO: Pacientes NÃO têm usuário no sistema
-// 6. Paciente social (isenção de anuidade)
+// MULTI-TENANCY:
+//   TODAS as operações recebem association_id como primeiro parâmetro.
+//   Todas as queries SQL filtram por association_id.
+//   NUNCA faça uma query sem filtro de associação!
 // ================================================================
 
 package services
@@ -84,8 +81,10 @@ type UpdatePatientRequest struct {
 	IsSocialPatient     *bool     `json:"is_social_patient" validate:"omitempty"`
 }
 
+// PatientResponse - Resposta com dados do paciente
 type PatientResponse struct {
 	ID                   string     `json:"id"`
+	AssociationID        string     `json:"association_id"` // ← MULTI-TENANCY
 	UserID               *string    `json:"user_id,omitempty"`
 	FullName             string     `json:"full_name"`
 	BirthDate            string     `json:"birth_date"`
@@ -128,52 +127,60 @@ type UpdateStatusRequest struct {
 // ================================================================
 // FUNÇÃO CREATE()
 // ================================================================
-func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, error) {
-	// --- 1. Validar dados ---
+// Cria um novo paciente na associação.
+//
+// PARÂMETROS:
+//   - associationID: ID da associação (extraído do JWT)
+//   - req: Dados do paciente
+//
+// RETORNO:
+//   - *PatientResponse: Dados do paciente criado
+//   - error: Erro se houver falha
+//
+// ⚠️ IMPORTANTE: O association_id é SEMPRE passado como parâmetro!
+// Nunca confie no frontend para enviar o association_id.
+// ================================================================
+func (s *PatientService) Create(associationID uuid.UUID, req CreatePatientRequest) (*PatientResponse, error) {
+	// --- PASSO 1: Validar dados ---
 	if err := validatePatientData(req); err != nil {
 		return nil, err
 	}
 
-	// --- 2. Verificar CPF duplicado ---
+	// --- PASSO 2: Verificar CPF duplicado DENTRO da associação ---
 	var existingPatient models.Patient
-	err := s.db.Where("cpf = ?", req.CPF).First(&existingPatient).Error
+	err := s.db.Where("cpf = ? AND association_id = ?", req.CPF, associationID).First(&existingPatient).Error
 	if err == nil {
-		return nil, fmt.Errorf("CPF %s já cadastrado", req.CPF)
+		return nil, fmt.Errorf("CPF %s já cadastrado nesta associação", req.CPF)
 	} else if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
 
-	// --- 3. Verificar email duplicado (se informado) ---
+	// --- PASSO 3: Verificar email duplicado DENTRO da associação ---
 	if req.Email != "" {
-		err = s.db.Where("email = ?", req.Email).First(&existingPatient).Error
+		err = s.db.Where("email = ? AND association_id = ?", req.Email, associationID).First(&existingPatient).Error
 		if err == nil {
-			return nil, fmt.Errorf("email %s já cadastrado para outro paciente", req.Email)
+			return nil, fmt.Errorf("email %s já cadastrado nesta associação", req.Email)
 		} else if err != gorm.ErrRecordNotFound {
 			return nil, err
 		}
 	}
 
-	// ============================================================
-	// 🔧 CORREÇÃO: Pacientes NÃO têm usuário no sistema
-	// ============================================================
-	// Removida a criação de usuário para pacientes.
-	// Pacientes são apenas pessoas assistidas, não usuários do sistema.
-	// ============================================================
-	// userID, err := s.createUserForPatient(req.FullName, req.Email)
-	// if err != nil {
-	//     return nil, err
-	// }
-	// ============================================================
-
-	// --- 5. Definir status padrão ---
-	status := req.Status
-	if status == "" {
-		status = "pendente_documentacao"
+	// --- PASSO 4: Verificar se a associação atingiu o limite de pacientes ---
+	var association models.Association
+	if err := s.db.Where("id = ?", associationID).First(&association).Error; err != nil {
+		return nil, err
 	}
 
-	// --- 6. Criar o paciente (sem vínculo com usuário) ---
+	var patientCount int64
+	s.db.Model(&models.Patient{}).Where("association_id = ?", associationID).Count(&patientCount)
+
+	if association.Plan == "basic" && int(patientCount) >= association.PatientLimit {
+		return nil, errors.New("limite de pacientes do plano básico atingido. Faça upgrade para o plano premium")
+	}
+
+	// --- PASSO 5: Criar o paciente com association_id ---
 	patient := &models.Patient{
-		UserID:              nil, // 🔧 SEMPRE nil (paciente não tem login)
+		AssociationID:       associationID, // ← MULTI-TENANCY: sempre setado!
 		FullName:            req.FullName,
 		BirthDate:           req.BirthDate,
 		Gender:              req.Gender,
@@ -189,7 +196,7 @@ func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, err
 		AddressCity:         req.AddressCity,
 		AddressState:        strings.ToUpper(req.AddressState),
 		AddressZipCode:      req.AddressZipCode,
-		Status:              status,
+		Status:              "pendente_documentacao",
 		IsSocialPatient:     req.IsSocialPatient,
 	}
 
@@ -203,9 +210,15 @@ func (s *PatientService) Create(req CreatePatientRequest) (*PatientResponse, err
 // ================================================================
 // FUNÇÃO GETBYID()
 // ================================================================
-func (s *PatientService) GetByID(id uuid.UUID) (*PatientResponse, error) {
+// Busca um paciente pelo ID (SEMPRE com filtro de associação)
+//
+// ⚠️ IMPORTANTE: NUNCA faça: db.Where("id = ?", id)
+// Sempre filtre por association_id também!
+// ================================================================
+func (s *PatientService) GetByID(associationID uuid.UUID, id uuid.UUID) (*PatientResponse, error) {
 	var patient models.Patient
-	if err := s.db.Where("id = ?", id).First(&patient).Error; err != nil {
+	// ⚠️ SEMPRE filtra por association_id!
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("paciente não encontrado")
 		}
@@ -217,7 +230,17 @@ func (s *PatientService) GetByID(id uuid.UUID) (*PatientResponse, error) {
 // ================================================================
 // FUNÇÃO LIST()
 // ================================================================
-func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64, error) {
+// Lista pacientes da associação com filtros.
+//
+// PARÂMETROS:
+//   - associationID: ID da associação (extraído do JWT)
+//   - req: Filtros e paginação
+//
+// ⚠️ IMPORTANTE: SEMPRE filtra por association_id!
+// Nunca faça: s.db.Find(&patients) - Isso mostraria pacientes de TODAS as associações!
+// ================================================================
+func (s *PatientService) List(associationID uuid.UUID, req ListPatientRequest) ([]PatientResponse, int64, error) {
+	// --- PASSO 1: Definir paginação ---
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -226,8 +249,11 @@ func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64,
 	}
 	offset := (req.Page - 1) * req.Limit
 
-	query := s.db.Model(&models.Patient{})
+	// --- PASSO 2: Construir query SEMPRE com association_id ---
+	// ⚠️ NUNCA remova o filtro de association_id!
+	query := s.db.Model(&models.Patient{}).Where("association_id = ?", associationID)
 
+	// Aplicar filtros (todos COM association_id)
 	if req.Name != "" {
 		query = query.Where("full_name ILIKE ?", "%"+req.Name+"%")
 	}
@@ -244,16 +270,19 @@ func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64,
 		query = query.Where("is_social_patient = ?", *req.IsSocial)
 	}
 
+	// --- PASSO 3: Contar total (SEMPRE com association_id) ---
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// --- PASSO 4: Buscar com paginação (SEMPRE com association_id) ---
 	var patients []models.Patient
 	if err := query.Offset(offset).Limit(req.Limit).Order("full_name ASC").Find(&patients).Error; err != nil {
 		return nil, 0, err
 	}
 
+	// --- PASSO 5: Converter para resposta ---
 	var responses []PatientResponse
 	for _, patient := range patients {
 		responses = append(responses, *toPatientResponse(&patient))
@@ -265,15 +294,19 @@ func (s *PatientService) List(req ListPatientRequest) ([]PatientResponse, int64,
 // ================================================================
 // FUNÇÃO UPDATE()
 // ================================================================
-func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*PatientResponse, error) {
+// Atualiza os dados de um paciente (SEMPRE com filtro de associação)
+// ================================================================
+func (s *PatientService) Update(associationID uuid.UUID, id uuid.UUID, req UpdatePatientRequest) (*PatientResponse, error) {
+	// --- PASSO 1: Buscar paciente (SEMPRE com association_id) ---
 	var patient models.Patient
-	if err := s.db.Where("id = ?", id).First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("paciente não encontrado")
 		}
 		return nil, err
 	}
 
+	// --- PASSO 2: Atualizar campos ---
 	if req.FullName != "" {
 		patient.FullName = req.FullName
 	}
@@ -320,6 +353,7 @@ func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*Patien
 		patient.IsSocialPatient = *req.IsSocialPatient
 	}
 
+	// --- PASSO 3: Salvar ---
 	if err := s.db.Save(&patient).Error; err != nil {
 		return nil, err
 	}
@@ -330,8 +364,10 @@ func (s *PatientService) Update(id uuid.UUID, req UpdatePatientRequest) (*Patien
 // ================================================================
 // FUNÇÃO DELETE()
 // ================================================================
-func (s *PatientService) Delete(id uuid.UUID) error {
-	result := s.db.Delete(&models.Patient{}, "id = ?", id)
+// Remove um paciente (soft delete) - SEMPRE com filtro de associação
+// ================================================================
+func (s *PatientService) Delete(associationID uuid.UUID, id uuid.UUID) error {
+	result := s.db.Where("id = ? AND association_id = ?", id, associationID).Delete(&models.Patient{})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -344,31 +380,38 @@ func (s *PatientService) Delete(id uuid.UUID) error {
 // ================================================================
 // FUNÇÃO UPDATESTATUS()
 // ================================================================
-func (s *PatientService) UpdateStatus(id uuid.UUID, req UpdateStatusRequest, userID uuid.UUID) (*PatientResponse, error) {
+// Atualiza o status de um paciente - SEMPRE com filtro de associação
+// ================================================================
+func (s *PatientService) UpdateStatus(associationID uuid.UUID, id uuid.UUID, req UpdateStatusRequest, userID uuid.UUID) (*PatientResponse, error) {
+	// --- PASSO 1: Buscar paciente (SEMPRE com association_id) ---
 	var patient models.Patient
-	if err := s.db.Where("id = ?", id).First(&patient).Error; err != nil {
+	if err := s.db.Where("id = ? AND association_id = ?", id, associationID).First(&patient).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, errors.New("paciente não encontrado")
 		}
 		return nil, err
 	}
 
+	// --- PASSO 2: Verificar se o status é diferente do atual ---
 	if patient.Status == req.Status {
 		return nil, errors.New("paciente já está com este status")
 	}
 
+	// --- PASSO 3: Registrar histórico de status ---
 	history := &models.PatientStatusHistory{
-		PatientID: patient.ID,
-		ChangedBy: &userID,
-		OldStatus: patient.Status,
-		NewStatus: req.Status,
-		Reason:    req.Reason,
+		AssociationID: associationID, // ← ESSENCIAL!
+		PatientID:     patient.ID,
+		ChangedBy:     &userID,
+		OldStatus:     patient.Status,
+		NewStatus:     req.Status,
+		Reason:        req.Reason,
 	}
 
 	if err := s.db.Create(history).Error; err != nil {
 		return nil, err
 	}
 
+	// --- PASSO 4: Atualizar status do paciente ---
 	patient.Status = req.Status
 
 	if req.Status == "aprovado" {
@@ -386,34 +429,22 @@ func (s *PatientService) UpdateStatus(id uuid.UUID, req UpdateStatusRequest, use
 // ================================================================
 // FUNÇÃO GETSTATISTICS()
 // ================================================================
-func (s *PatientService) GetStatistics() (map[string]interface{}, error) {
+// Retorna estatísticas dos pacientes (dashboard)
+// ================================================================
+func (s *PatientService) GetStatistics(associationID uuid.UUID) (map[string]interface{}, error) {
 	var stats map[string]interface{}
-
-	err := s.db.Table("vw_patient_dashboard").Find(&stats).Error
+	// ⚠️ A view vw_patient_dashboard já tem association_id
+	// Filtramos para trazer apenas os dados da associação
+	err := s.db.Table("vw_patient_dashboard").Where("association_id = ?", associationID).Find(&stats).Error
 	if err != nil {
 		return nil, err
 	}
-
 	return stats, nil
 }
 
 // ================================================================
 // FUNÇÕES AUXILIARES
 // ================================================================
-
-// ================================================================
-// 🔧 FUNÇÃO DESATIVADA: Pacientes NÃO têm usuário
-// ================================================================
-// createUserForPatient - DESATIVADO - Pacientes não têm login
-// ================================================================
-// func (s *PatientService) createUserForPatient(name, email string) (*uuid.UUID, error) {
-//     return nil, nil
-// }
-
-// generateTempPassword - Mantido para compatibilidade (não usado)
-func generateTempPassword() string {
-	return "temp123456"
-}
 
 // toPatientResponse - Converte models.Patient para PatientResponse
 func toPatientResponse(patient *models.Patient) *PatientResponse {
@@ -425,6 +456,7 @@ func toPatientResponse(patient *models.Patient) *PatientResponse {
 
 	return &PatientResponse{
 		ID:                   patient.ID.String(),
+		AssociationID:        patient.AssociationID.String(), // ← MULTI-TENANCY
 		UserID:               userID,
 		FullName:             patient.FullName,
 		BirthDate:            patient.BirthDate.Format("2006-01-02"),

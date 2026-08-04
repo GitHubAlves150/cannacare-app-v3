@@ -1,23 +1,14 @@
 // ================================================================
-// PACOTE MODELS
+// CANNACARE - BASE MODEL
 // ================================================================
-// Define a estrutura base para todos os models do sistema.
-//
-// Esta struct é EMBUTIDA em todos os outros models para
-// padronizar campos comuns como ID, CreatedAt, UpdatedAt e DeletedAt.
+// Este arquivo define a estrutura BASE que será EMBUTIDA em todos
+// os outros models do sistema.
 //
 // POR QUE USAR UM BASE MODEL?
-// 1. DRY (Don't Repeat Yourself) - Evita repetição de campos
-// 2. Padronização - Todos os models têm os mesmos campos base
-// 3. Facilidade de manutenção - Mudar um campo apenas em um lugar
-// 4. GORM reconhece automaticamente os campos padrão
-//
-// EXEMPLO:
-//   type Patient struct {
-//       BaseModel           // Embute os campos base
-//       Name string         // Campos específicos do paciente
-//       CPF  string
-//   }
+// 1. DRY (Don't Repeat Yourself) - Não repetimos campos em todo lugar
+// 2. Padronização - Todos os models têm ID, timestamps e soft delete
+// 3. Facilidade de manutenção - Mudamos em um só lugar
+// 4. O GORM reconhece automaticamente os campos CreatedAt, UpdatedAt, DeletedAt
 // ================================================================
 
 package models
@@ -32,19 +23,27 @@ import (
 // ================================================================
 // STRUCT BASEMODEL
 // ================================================================
-// BaseModel contém os campos comuns a todas as tabelas do sistema.
+// Todos os models do sistema vão EMBUTIR esta struct.
+// Isso significa que todos terão os campos:
+//   - ID: UUID único (chave primária)
+//   - CreatedAt: Data de criação (automático)
+//   - UpdatedAt: Data da última atualização (automático)
+//   - DeletedAt: Data de exclusão lógica (soft delete)
 //
-// CAMPOS:
-//
-//	ID        - UUID único (chave primária)
-//	CreatedAt - Data/hora de criação (automático)
-//	UpdatedAt - Data/hora da última atualização (automático)
-//	DeletedAt - Data/hora da exclusão lógica (soft delete)
+// EXEMPLO DE USO:
+//   type Patient struct {
+//       BaseModel  // ← EMBUTE os campos base
+//       Name string // ← Campos específicos
+//   }
+// ================================================================
+
 type BaseModel struct {
 	// ID é a chave primária de todas as tabelas
-	// Usa UUID (Universally Unique Identifier) em vez de inteiro sequencial
-	// Vantagens: Não é sequencial, não expõe quantidade de registros,
-	//            É único globalmente, seguro para APIs públicas
+	// Usamos UUID (Universally Unique Identifier) em vez de inteiro sequencial
+	// VANTAGENS DO UUID:
+	//   - Não é sequencial (não expõe quantos registros existem)
+	//   - É único globalmente (pode ser gerado em qualquer lugar)
+	//   - Seguro para APIs públicas (não dá para adivinhar o próximo ID)
 	ID uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
 
 	// CreatedAt é preenchido automaticamente pelo GORM
