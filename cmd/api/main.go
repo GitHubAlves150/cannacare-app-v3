@@ -17,6 +17,7 @@ package main
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"cannacare-backend/internal/config"
 	"cannacare-backend/internal/database"
@@ -87,6 +88,8 @@ func main() {
 	emailService := services.NewEmailService()
 	paymentService := services.NewPaymentService()
 	onboardingService := services.NewOnboardingService(database.DB, emailService, paymentService)
+	planLifecycleService := services.NewPlanLifecycleService(database.DB, emailService)
+	billingHandler := handlers.NewBillingHandler(onboardingService, database.DB)
 
 	// ================================================================
 	// PASSO 6: Inicializar HANDLERS
@@ -159,6 +162,11 @@ func main() {
 				"role":           role,
 			})
 		})
+
+		r.Post("/api/billing/renew", billingHandler.RenewPremium)
+		r.Get("/api/notifications", billingHandler.ListNotifications)
+		r.Patch("/api/notifications/{id}/read", billingHandler.MarkNotificationRead)
+		r.Get("/api/billing/plan", billingHandler.GetPlanInfo)
 
 		// ================================================================
 		// MÉDICOS (admin, secretaria, coordenacao)
@@ -326,6 +334,16 @@ func main() {
 	// ================================================================
 	// PASSO 8: Iniciar servidor
 	// ================================================================
+	// Roda a checagem de planos uma vez ao iniciar, depois a cada 24h
+	go func() {
+		planLifecycleService.RunDailyChecks()
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			planLifecycleService.RunDailyChecks()
+		}
+	}()
+
 	addr := ":" + cfg.ServerPort
 
 	log.Println("")

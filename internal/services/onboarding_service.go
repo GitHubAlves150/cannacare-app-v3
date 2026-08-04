@@ -371,20 +371,35 @@ func (s *OnboardingService) ActivatePremiumPlan(associationID uuid.UUID, payment
 		return err
 	}
 
-	// --- Idempotência: já foi processado, não faz nada de novo ---
-	if association.Status == "active" && association.Plan == "premium" {
+	// --- Idempotência: ESSE pagamento específico já foi processado ---
+	// (não checamos status/plan aqui, porque numa RENOVAÇÃO a associação
+	// já está ativa/premium mesmo assim — o que não pode repetir é
+	// processar o MESMO pagamento duas vezes, caso o Mercado Pago
+	// reenvie a notificação).
+	if paymentReference != "" && association.PaymentReference == paymentReference {
 		return nil
 	}
 
-	// --- Ativar o plano ---
+	// --- Renovação x primeira ativação ---
+	// Se já era premium/ativa antes desse pagamento, é renovação: soma
+	// 12 meses ao prazo que ainda resta (em vez de zerar), e não manda
+	// convite de novo (o admin já tem senha configurada).
+	isRenewal := association.Status == "active" && association.Plan == "premium"
+
 	now := time.Now()
-	expiresAt := now.AddDate(1, 0, 0) // 12 meses
+	baseTime := now
+	if isRenewal && association.PlanExpiresAt != nil && association.PlanExpiresAt.After(now) {
+		baseTime = *association.PlanExpiresAt
+	}
+	expiresAt := baseTime.AddDate(1, 0, 0) // 12 meses
 
 	association.Plan = "premium"
 	association.Status = "active"
 	association.PatientLimit = 999999
 	association.UserLimit = 10
-	association.PlanActivatedAt = &now
+	if !isRenewal {
+		association.PlanActivatedAt = &now
+	}
 	association.PlanExpiresAt = &expiresAt
 	association.PaymentReference = paymentReference
 
@@ -392,13 +407,21 @@ func (s *OnboardingService) ActivatePremiumPlan(associationID uuid.UUID, payment
 		return err
 	}
 
-	// --- Buscar o admin criado no cadastro ---
+	// --- Buscar o admin da associação ---
 	var adminUser models.User
 	if err := s.db.Where("association_id = ? AND role = ?", association.ID, "admin").First(&adminUser).Error; err != nil {
 		return fmt.Errorf("associação ativada, mas admin não encontrado: %w", err)
 	}
 
-	// --- Gerar um NOVO link de convite (o antigo nunca foi enviado, só existe o hash dele) ---
+	// --- Renovação: só confirma por email, sem link de convite novo ---
+	if isRenewal {
+		if err := s.emailService.SendPlanRenewedEmail(adminUser.Email, adminUser.Name, association.Name, expiresAt); err != nil {
+			fmt.Printf("⚠️ erro ao enviar email de renovação para %s: %v\n", adminUser.Email, err)
+		}
+		return nil
+	}
+
+	// --- Primeira ativação: gerar link de convite (o do cadastro nunca foi enviado) ---
 	rawToken, tokenHash, err := generateInviteToken()
 	if err != nil {
 		return fmt.Errorf("associação ativada, mas erro ao gerar convite: %w", err)
@@ -422,4 +445,32 @@ func (s *OnboardingService) ActivatePremiumPlan(associationID uuid.UUID, payment
 
 	return nil
 }
-//   test123456@testuser.com  v7vByTwpDk 48955236547
+
+// ================================================================
+// CREATERENEWALCHECKOUT - endpoint autenticado (cliente já logado)
+// ================================================================
+// Diferente do onboarding: aqui a associação JÁ EXISTE e está
+// logada — não precisa de CNPJ, formulário nem nada disso. Só gera
+// um novo checkout do Mercado Pago pra renovar por mais 12 meses.
+// O webhook, ao confirmar, chama ActivatePremiumPlan de novo, que já
+// sabe estender o prazo em vez de zerar (ver isRenewal ali em cima).
+func (s *OnboardingService) CreateRenewalCheckout(associationID uuid.UUID) (checkoutURL string, err error) {
+	var association models.Association
+	if err := s.db.Where("id = ?", associationID).First(&association).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return "", errors.New("associação não encontrada")
+		}
+		return "", err
+	}
+
+	checkoutURL, preferenceID, err := s.paymentService.CreateCheckoutPreference(association.ID, association.Email, precoPremiumMensal)
+	if err != nil {
+		return "", fmt.Errorf("erro ao gerar pagamento: %w", err)
+	}
+
+	// Guarda a preferência gerada (não o pagamento em si ainda — isso só
+	// muda quando o webhook confirmar de verdade, com o payment_id real).
+	_ = preferenceID
+
+	return checkoutURL, nil
+}

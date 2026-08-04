@@ -107,6 +107,59 @@ func (e *EmailService) SendInviteEmail(toEmail, nomeResponsavel, nomeAssociacao,
 }
 
 // ================================================================
+// SendPlanRenewedEmail - usado quando um cliente JÁ ATIVO renova
+// ================================================================
+// Diferente do SendPlanActivatedEmail: não manda link de convite (o
+// admin já tem senha configurada), só confirma a renovação.
+func (e *EmailService) SendPlanRenewedEmail(toEmail, nomeResponsavel, nomeAssociacao string, novaExpiracaoEm time.Time) error {
+	subject := "Plano renovado — CannaCare Premium"
+
+	html := fmt.Sprintf(`
+		<div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+			<h2 style="color:#16332a;">Renovação confirmada, %s! 🎉</h2>
+			<p>O plano premium da associação <strong>%s</strong> foi renovado.</p>
+			<p>Válido até <strong>%s</strong>.</p>
+		</div>
+	`, nomeResponsavel, nomeAssociacao, novaExpiracaoEm.Format("02/01/2006"))
+
+	return e.send(toEmail, subject, html)
+}
+
+// ================================================================
+// SendPlanExpiringEmail - aviso de expiração próxima (job diário)
+// ================================================================
+func (e *EmailService) SendPlanExpiringEmail(toEmail, nomeResponsavel, nomeAssociacao string, diasRestantes int, expiraEm time.Time) error {
+	subject := fmt.Sprintf("Seu plano CannaCare expira em %d dias", diasRestantes)
+
+	html := fmt.Sprintf(`
+		<div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+			<h2 style="color:#16332a;">Olá, %s</h2>
+			<p>O plano premium da associação <strong>%s</strong> expira em <strong>%d dias</strong> (%s).</p>
+			<p>Para não perder o acesso aos recursos do plano premium, renove dentro do próprio sistema, na tela de plano/assinatura.</p>
+		</div>
+	`, nomeResponsavel, nomeAssociacao, diasRestantes, expiraEm.Format("02/01/2006"))
+
+	return e.send(toEmail, subject, html)
+}
+
+// ================================================================
+// SendPlanExpiredEmail - aviso de que o plano expirou e virou básico
+// ================================================================
+func (e *EmailService) SendPlanExpiredEmail(toEmail, nomeResponsavel, nomeAssociacao string) error {
+	subject := "Seu plano CannaCare expirou"
+
+	html := fmt.Sprintf(`
+		<div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+			<h2 style="color:#16332a;">Olá, %s</h2>
+			<p>O plano premium da associação <strong>%s</strong> expirou e a conta voltou automaticamente para o plano básico.</p>
+			<p>Os dados continuam intactos — é só renovar dentro do sistema para recuperar os limites do plano premium.</p>
+		</div>
+	`, nomeResponsavel, nomeAssociacao)
+
+	return e.send(toEmail, subject, html)
+}
+
+// ================================================================
 // SendPlanActivatedEmail - usado depois, quando o webhook do
 // Mercado Pago confirmar o pagamento do plano premium
 // ================================================================
