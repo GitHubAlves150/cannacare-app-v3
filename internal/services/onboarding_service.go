@@ -81,7 +81,7 @@ type OnboardingResponseData struct {
 }
 
 // Preços em reais - plano premium mensal (mesma regra usada na página de planos)
-const precoPremiumMensal = 1.00
+const precoPremiumMensal = 25.00
 
 // ================================================================
 // CREATE
