@@ -97,7 +97,7 @@ func main() {
 	log.Println("🎯 Inicializando handlers...")
 	// Junto dos outros handlers
 	userHandler := handlers.NewAdminUserHandler(userService)
-
+	profileHandler := handlers.NewProfileHandler(database.DB)
 	authHandler := handlers.NewAuthHandler(authService)
 	patientHandler := handlers.NewPatientHandler(patientService)
 	doctorHandler := handlers.NewDoctorHandler(doctorService)
@@ -154,6 +154,9 @@ func main() {
 		// ⚠️ Aplica o middleware de autenticação em TODAS as rotas abaixo
 		r.Use(middleware.AuthMiddleware(jwtService))
 
+		r.Get("/api/users/me", profileHandler.GetMe)
+		r.Put("/api/users/me", profileHandler.UpdateMe)
+		r.Put("/api/users/me/password", profileHandler.ChangePassword)
 		// ================================================================
 		// ROTA DE TESTE - VERIFICA AUTENTICAÇÃO
 		// ================================================================
