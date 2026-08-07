@@ -39,14 +39,14 @@ import (
 type OnboardingService struct {
 	db             *gorm.DB
 	emailService   *EmailService
-	paymentService *PaymentService
+	stripeService *StripeService
 }
 
-func NewOnboardingService(db *gorm.DB, emailService *EmailService, paymentService *PaymentService) *OnboardingService {
+func NewOnboardingService(db *gorm.DB, emailService *EmailService, stripeService *StripeService) *OnboardingService {
 	return &OnboardingService{
-		db:             db,
-		emailService:   emailService,
-		paymentService: paymentService,
+		db:            db,
+		emailService:  emailService,
+		stripeService: stripeService,
 	}
 }
 
@@ -190,13 +190,13 @@ func (s *OnboardingService) Create(req OnboardingRequest) (*OnboardingResponseDa
 		return &OnboardingResponseData{AssociationID: association.ID.String()}, nil
 	}
 
-	// --- 8. Plano premium: gera o checkout do Mercado Pago ---
-	checkoutURL, preferenceID, err := s.paymentService.CreateCheckoutPreference(association.ID, req.ResponsavelEmail, precoPremiumMensal)
+	// --- 8. Plano premium: gera o checkout do Stripe ---
+	checkoutURL, sessionID, err := s.stripeService.CreateCheckoutSession(association.ID, req.ResponsavelEmail, precoPremiumMensal)
 	if err != nil {
 		return nil, fmt.Errorf("erro ao gerar pagamento: %w", err)
 	}
 
-	association.PaymentReference = preferenceID
+	association.PaymentReference = sessionID
 	s.db.Save(association)
 
 	// O email do plano premium só sai quando o webhook confirmar o
@@ -323,45 +323,14 @@ func (s *OnboardingService) findValidInvite(rawToken string) (*models.InviteToke
 }
 
 // ================================================================
-// PROCESSPAYMENTWEBHOOK - ponto de entrada único para o webhook
-// ================================================================
-// Busca o pagamento DE VERDADE na API do Mercado Pago (nunca confia
-// só no que o webhook mandou) e, se estiver aprovado, ativa o plano.
-func (s *OnboardingService) ProcessPaymentWebhook(mpPaymentID string) error {
-	payment, err := s.paymentService.GetPayment(mpPaymentID)
-	if err != nil {
-		return err
-	}
-
-	// Só nos importa quando o pagamento foi de fato aprovado.
-	// Outros status (pending, rejected, in_process...) são ignorados
-	// aqui — o Mercado Pago vai mandar um novo webhook se/quando
-	// o status mudar para approved.
-	if payment.Status != "approved" {
-		return nil
-	}
-
-	if payment.ExternalReference == "" {
-		return errors.New("pagamento aprovado sem external_reference")
-	}
-
-	associationID, err := uuid.Parse(payment.ExternalReference)
-	if err != nil {
-		return fmt.Errorf("external_reference inválido: %w", err)
-	}
-
-	return s.ActivatePremiumPlan(associationID, payment.ID)
-}
-
-// ================================================================
-// ACTIVATEPREMIUMPLAN - chamado pelo webhook do Mercado Pago
+// ACTIVATEPREMIUMPLAN - chamado pelo webhook do Stripe
 // ================================================================
 // Ativa o plano premium de uma associação depois que o pagamento foi
-// CONFIRMADO de verdade na API do Mercado Pago (não confia no webhook
-// sozinho, isso já foi checado antes de chamar essa função).
+// CONFIRMADO de verdade (assinatura do webhook já validada no handler
+// antes de chegar aqui — ver internal/services/stripe_service.go).
 //
-// É idempotente: se a associação já estiver ativa, não faz nada de
-// novo (o Mercado Pago pode reenviar o mesmo webhook várias vezes).
+// É idempotente: se o mesmo pagamento já foi processado, não faz
+// nada de novo (o Stripe pode reenviar o mesmo webhook várias vezes).
 func (s *OnboardingService) ActivatePremiumPlan(associationID uuid.UUID, paymentReference string) error {
 	var association models.Association
 	if err := s.db.Where("id = ?", associationID).First(&association).Error; err != nil {
@@ -463,14 +432,14 @@ func (s *OnboardingService) CreateRenewalCheckout(associationID uuid.UUID) (chec
 		return "", err
 	}
 
-	checkoutURL, preferenceID, err := s.paymentService.CreateCheckoutPreference(association.ID, association.Email, precoPremiumMensal)
+	checkoutURL, sessionID, err := s.stripeService.CreateCheckoutSession(association.ID, association.Email, precoPremiumMensal)
 	if err != nil {
 		return "", fmt.Errorf("erro ao gerar pagamento: %w", err)
 	}
 
-	// Guarda a preferência gerada (não o pagamento em si ainda — isso só
-	// muda quando o webhook confirmar de verdade, com o payment_id real).
-	_ = preferenceID
+	// Guarda a sessão gerada (não o pagamento em si ainda — isso só
+	// muda quando o webhook confirmar de verdade).
+	_ = sessionID
 
 	return checkoutURL, nil
 }

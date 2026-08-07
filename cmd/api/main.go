@@ -86,8 +86,8 @@ func main() {
 	// Junto dos outros services (perto de patientService, doctorService...)
 	userService := services.NewUserService(database.DB)
 	emailService := services.NewEmailService()
-	paymentService := services.NewPaymentService()
-	onboardingService := services.NewOnboardingService(database.DB, emailService, paymentService)
+	stripeService := services.NewStripeService()
+	onboardingService := services.NewOnboardingService(database.DB, emailService, stripeService)
 	planLifecycleService := services.NewPlanLifecycleService(database.DB, emailService)
 	billingHandler := handlers.NewBillingHandler(onboardingService, database.DB)
 
@@ -109,7 +109,8 @@ func main() {
 	financialHandler := handlers.NewFinancialHandler(financialService)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
 	documentHandler := handlers.NewDocumentHandler(documentService)
-	publicHandler := handlers.NewPublicHandler(onboardingService)
+	publicHandler := handlers.NewPublicHandler(onboardingService, stripeService)
+
 	// ================================================================
 	// PASSO 7: Configurar ROTAS
 	// ================================================================
@@ -339,7 +340,7 @@ func main() {
 	r.Post("/api/public/associations", publicHandler.CreateAssociation)
 	r.Get("/api/public/invite/{token}", publicHandler.ValidateInvite)
 	r.Post("/api/public/invite/{token}", publicHandler.RedeemInvite)
-	r.Post("/api/public/billing/webhook/mercadopago", publicHandler.MercadoPagoWebhook)
+	r.Post("/api/public/billing/webhook/stripe", publicHandler.StripeWebhook)
 	// ================================================================
 	// PASSO 8: Iniciar servidor
 	// ================================================================

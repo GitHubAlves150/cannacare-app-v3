@@ -13,6 +13,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 
@@ -21,16 +22,19 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 type PublicHandler struct {
 	onboardingService *services.OnboardingService
+	stripeService     *services.StripeService
 	validator         *validator.Validate
 }
 
-func NewPublicHandler(onboardingService *services.OnboardingService) *PublicHandler {
+func NewPublicHandler(onboardingService *services.OnboardingService, stripeService *services.StripeService) *PublicHandler {
 	return &PublicHandler{
 		onboardingService: onboardingService,
+		stripeService:     stripeService,
 		validator:         validator.New(),
 	}
 }
@@ -109,54 +113,60 @@ func (h *PublicHandler) RedeemInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 // ================================================================
-// POST /api/public/billing/webhook/mercadopago
+// POST /api/public/billing/webhook/stripe
 // ================================================================
-// O Mercado Pago manda essa notificação de duas formas possíveis:
-//   1. Query params (formato antigo/IPN): ?topic=payment&id=123
-//   2. Corpo JSON (formato novo): {"type":"payment","data":{"id":"123"}}
+// O Stripe assina cada webhook com HMAC (header "Stripe-Signature"),
+// usando a STRIPE_WEBHOOK_SECRET configurada — é assim que sabemos
+// que a notificação é de verdade, e não alguém forjando um POST.
 //
 // ⚠️ IMPORTANTE: sempre respondemos 200 rapidinho, mesmo se o
-// processamento falhar internamente — se responder erro, o Mercado
-// Pago fica reenviando a mesma notificação sem parar. Erros reais
-// ficam só no log do servidor pra investigar depois.
-type mercadoPagoWebhookBody struct {
-	Type string `json:"type"`
-	Data struct {
-		ID string `json:"id"`
-	} `json:"data"`
-}
-
-func (h *PublicHandler) MercadoPagoWebhook(w http.ResponseWriter, r *http.Request) {
-	var paymentID string
-	var eventType string
-
-	// --- 1. Tentar ler do corpo JSON (formato novo) ---
-	var body mercadoPagoWebhookBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Data.ID != "" {
-		paymentID = body.Data.ID
-		eventType = body.Type
-	}
-
-	// --- 2. Se não veio no corpo, tentar query params (formato antigo) ---
-	if paymentID == "" {
-		paymentID = r.URL.Query().Get("id")
-		eventType = r.URL.Query().Get("topic")
-		if eventType == "" {
-			eventType = r.URL.Query().Get("type")
-		}
-	}
-
-	// --- 3. Só nos interessa notificação de pagamento ---
-	if eventType != "payment" || paymentID == "" {
+// processamento falhar internamente — se responder erro, o Stripe
+// fica reenviando a mesma notificação sem parar. Erros reais ficam
+// só no log do servidor pra investigar depois.
+func (h *PublicHandler) StripeWebhook(w http.ResponseWriter, r *http.Request) {
+	// --- 1. Lê o corpo BRUTO (a assinatura é calculada em cima dos
+	// bytes exatos que o Stripe mandou — não pode re-serializar) ---
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		log.Printf("❌ erro ao ler corpo do webhook do Stripe: %v", err)
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	// --- 4. Processar (busca o pagamento de verdade e ativa se aprovado) ---
-	if err := h.onboardingService.ProcessPaymentWebhook(paymentID); err != nil {
-		log.Printf("❌ erro ao processar webhook do Mercado Pago (payment_id=%s): %v", paymentID, err)
+	// --- 2. Verifica a assinatura ---
+	sigHeader := r.Header.Get("Stripe-Signature")
+	event, err := h.stripeService.VerifyWebhookSignature(payload, sigHeader)
+	if err != nil {
+		log.Printf("❌ webhook do Stripe com assinatura inválida: %v", err)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// --- 3. Só nos interessa quando o checkout foi concluído E pago ---
+	if event.Type != "checkout.session.completed" || event.Data.Object.PaymentStatus != "paid" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	associationIDStr := event.Data.Object.Metadata.AssociationID
+	if associationIDStr == "" {
+		log.Printf("❌ webhook do Stripe aprovado sem association_id no metadata")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	associationID, err := uuid.Parse(associationIDStr)
+	if err != nil {
+		log.Printf("❌ association_id inválido no webhook do Stripe: %v", err)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// --- 4. Ativa o plano ---
+	if err := h.onboardingService.ActivatePremiumPlan(associationID, event.Data.Object.ID); err != nil {
+		log.Printf("❌ erro ao ativar plano (association_id=%s): %v", associationID, err)
 		// Ainda assim respondemos 200 — o erro já está logado, e devolver
-		// erro só faria o Mercado Pago reenviar a mesma notificação à toa.
+		// erro só faria o Stripe reenviar a mesma notificação à toa.
 	}
 
 	w.WriteHeader(http.StatusOK)
