@@ -196,8 +196,12 @@ func (s *OnboardingService) Create(req OnboardingRequest) (*OnboardingResponseDa
 		return nil, fmt.Errorf("erro ao gerar pagamento: %w", err)
 	}
 
-	association.PaymentReference = sessionID
-	s.db.Save(association)
+	// ⚠️ Não gravamos o sessionID em PaymentReference aqui — esse campo é
+	// usado pelo webhook como checagem de "já processei esse pagamento
+	// antes?" (idempotência). Se preenchêssemos aqui, o webhook chegaria
+	// comparando o mesmo valor contra si mesmo e pensaria que já tinha
+	// processado, sem nunca ativar o plano de verdade.
+	_ = sessionID
 
 	// O email do plano premium só sai quando o webhook confirmar o
 	// pagamento (ver EmailService.SendPlanActivatedEmail) — não aqui.
